@@ -1,0 +1,40 @@
+use super::Result;
+use failure::bail;
+use std::path::Path;
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
+pub enum StreamType {
+    RemoteFile, // file lives on the server
+    LocalFile,  // file lives on the client
+    Pipe,       // intermediate computation,
+    LocalStdout, // local standard out
+                // TODO: something for HTTPS streams for apps like git
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct DataStream {
+    pub stream_type: StreamType,
+    pub name: String,
+}
+
+impl DataStream {
+    // TODO: feels like the right design is to have a wrapper around the command class -- this way
+    // eventually you can stop using rust's command library
+    pub fn prepend_directory(&self, directory: &str) -> Result<String> {
+        match Path::new(directory)
+            .join(self.name.clone())
+            .as_path()
+            .to_str()
+        {
+            Some(s) => Ok(s.to_string()),
+            None => bail!("Could not prepend directory {} to {}", directory, self.name),
+        }
+    }
+
+    pub fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn get_type(&self) -> StreamType {
+        self.stream_type
+    }
+}

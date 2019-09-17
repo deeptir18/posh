@@ -1,0 +1,32 @@
+[package]
+name = "dash"
+version = "0.1.0"
+authors = ["Deepti Raghavan <deeptir@cs.stanford.edu>"]
+edition = "2018"
+
+[dependencies]
+fnv = "1.0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
+bincode = "1.0.1"
+clap="2.32.0"
+structopt="0.2.16"
+structopt-derive="0.2.16"
+bytes = "0.4.12"
+which = "2.0.1"
+slog = "2.5.2"
+shellwords = "1.0.0"
+failure = "0.1.5"
+
+
+[profile.dev]
+opt-level = 3 # NOTE: non-standard, usually 0
+debug = false
+rpath = false
+lto = false
+debug-assertions = false
+codegen-units = 16
+panic = 'unwind'
+incremental = false
+overflow-checks = false
+
