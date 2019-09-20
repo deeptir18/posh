@@ -20,6 +20,9 @@ impl ShellCommandWrapper {
             Err(e) => bail!("Could not find command: {:?}", e),
         };
         Ok(ShellCommandWrapper {
+            // TODO: maybe modify this or create your own execution pipeline?
+            // Need to fix the fact that when you try to output to a file on the other side -- it's
+            // sent to standard error
             command: Command::new(cmd_path.into_os_string()),
             name: cmd.to_string(),
         })
