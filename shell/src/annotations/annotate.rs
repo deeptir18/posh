@@ -14,19 +14,19 @@ struct Annotation {
     options: Vec<Argument>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Argument {
     Opt(OptArg),
     File(FileArg),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct OptArg {
     delimeter: String, // how this option is parsed
     info: SingleOption,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct SingleOption {
     name: String,
     num_args: u8,  // default: 0 (just a flag)
@@ -34,7 +34,7 @@ struct SingleOption {
     delim: String, // default: " "
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum OptionInfo {
     Name(String),
     NumArgs(u8),
@@ -42,49 +42,35 @@ enum OptionInfo {
     Delim(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct FileArg {
     name: String,
     file_type: FileType,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum FileType {
     Single,   // Single File
     Multiple, // List of Files
     Pattern,  // File pattern (e.g. *.txt)
 }
 
-struct Temp {
-    inside: String,
-}
-
 named!(
     parse_option_name<OptionInfo>,
     map!(
-        do_parse!(
-            //tag: tag!("name:") >>
-            name: next_alphabetic >> (name)
-        ),
-        |name: &str| {
-            println!("name: {:?}", name);
-            OptionInfo::Name(String::from(name))
-        }
+        do_parse!(tag: tag!("name:") >> name: next_alphabetic >> (name)),
+        |name: &str| { OptionInfo::Name(String::from(name)) }
     )
 );
 named!(
         next_alphabetic<&[u8], &str>,
-        map_res!(take_while1!(is_alphabetic), str::from_utf8)
+        map_res!(alpha1, str::from_utf8)
     );
-named!(wrapper<&[u8], &str>,
-    do_parse!(name: next_alphabetic >> (name))
-);
+
 named!(
     parse_option_num_args<OptionInfo>,
     map!(
-        do_parse!(
-            tag!("num_args:") >> dig: map_res!(take_while!(is_digit), str::from_utf8) >> (dig)
-        ),
+        do_parse!(tag!("num_args:") >> dig: map_res!(digit1, str::from_utf8) >> (dig)),
         |s: &str| OptionInfo::NumArgs(s.parse::<u8>().unwrap())
     )
 );
@@ -100,7 +86,7 @@ named!(
         tag!("delim:")
             >> delim:
                 map_res!(
-                    alt!(tag!("-") | tag!("--") | tag!("=") | tag!("==") | tag!(" ")),
+                    alt!(tag!("--") | tag!("-") | tag!("==") | tag!("=") | tag!(" ")),
                     str::from_utf8
                 )
             >> (OptionInfo::Delim(String::from(delim)))
@@ -115,26 +101,27 @@ named!(
 named!(
     parse_single_option<SingleOption>,
     map!(
-        many1!(do_parse!(
-            opt: parse_option_info >> opt!(tag!(",")) >> (opt)
+        many0!(do_parse!(
+            opt: parse_option_info >> //tag!(",") >>
+                         (opt)
         )),
         |(vec_options): (Vec<OptionInfo>)| {
+            println!("length of ret: {:?}", vec_options.len());
             let mut opt = SingleOption {
                 name: String::from(""),
                 num_args: 0,
                 is_file: false,
                 delim: String::from(" "),
             };
-            println!("length of ret: {:?}", vec_options.len());
             // TODO: return error if it's length 1 and name is not provided
-            for info in vec_options {
+            /*for info in vec_options {
                 match info {
                     OptionInfo::Name(name) => opt.name = name,
                     OptionInfo::IsFile => opt.is_file = true,
                     OptionInfo::Delim(d) => opt.delim = String::from(d),
                     OptionInfo::NumArgs(n) => opt.num_args = n,
                 }
-            }
+            }*/
             opt
         }
     )
@@ -159,21 +146,48 @@ named!(
 mod tests {
     use super::*;
 
-    /*#[test]
-    fn test_basic() {
-        println!(
-            "{:?}",
-            parse_annotation(
-                "cat: OPT:-[ahhh] OPT:--[aaaaaahhhahahahahaah] FILE:[SINGLE|MULTIPLE|PATTERN]"
-            )
-            .unwrap()
-        );
-        assert!(false);
-    }*/
     #[test]
-    fn test_opt_name() {
-        println!("{:?}", wrapper(b"name"));
-        assert!(false);
+    fn test_option_types() {
+        let (arr, n): (&[u8], OptionInfo) = parse_option_name(b"name:foo").unwrap();
+        assert_eq!(arr.len(), 0);
+        assert_eq!(n, OptionInfo::Name(String::from("foo")));
+
+        let (arr2, n2): (&[u8], OptionInfo) = parse_option_file(b"is_file").unwrap();
+        assert_eq!(arr2.len(), 0);
+        assert_eq!(n2, OptionInfo::IsFile);
+
+        let (arr3, n3): (&[u8], OptionInfo) = parse_option_delim(b"delim:--").unwrap();
+        assert_eq!(arr3.len(), 0);
+        assert_eq!(n3, OptionInfo::Delim(String::from("--")));
+
+        let (arr4, n4): (&[u8], OptionInfo) = parse_option_num_args(b"num_args:12").unwrap();
+        assert_eq!(arr4.len(), 0);
+        assert_eq!(n4, OptionInfo::NumArgs(12));
     }
 
+    #[test]
+    fn test_option_types_alt() {
+        let (arr, n): (&[u8], OptionInfo) = parse_option_info(b"name:foo").unwrap();
+        assert_eq!(arr.len(), 0);
+        assert_eq!(n, OptionInfo::Name(String::from("foo")));
+
+        let (arr2, n2): (&[u8], OptionInfo) = parse_option_info(b"is_file").unwrap();
+        assert_eq!(arr2.len(), 0);
+        assert_eq!(n2, OptionInfo::IsFile);
+
+        let (arr3, n3): (&[u8], OptionInfo) = parse_option_info(b"delim:--").unwrap();
+        assert_eq!(arr3.len(), 0);
+        assert_eq!(n3, OptionInfo::Delim(String::from("--")));
+
+        let (arr4, n4): (&[u8], OptionInfo) = parse_option_info(b"num_args:12").unwrap();
+        assert_eq!(arr4.len(), 0);
+        assert_eq!(n4, OptionInfo::NumArgs(12));
+    }
+
+    #[test]
+    fn test_full_single_option() {
+        let (arr, n): (&[u8], SingleOption) = parse_single_option(b"num_args:12").unwrap();
+        assert_eq!(arr.len(), 0);
+        println!("ret: {:?}", n);
+    }
 }
