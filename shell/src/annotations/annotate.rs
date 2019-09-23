@@ -4,23 +4,12 @@ extern crate nom;
 use dash::util::Result;
 use failure::bail;
 use nom::*;
+use std::fs::File;
+use std::io::{self, prelude::*, BufReader};
 use std::*;
 
-macro_rules! named_complete {
-    ($name:ident<$t:ty>, $submac:ident!( $($args:tt)* )) => (
-        fn $name( i: nom::types::CompleteByteSlice ) -> nom::IResult<nom::types::CompleteByteSlice, $t, u32> {
-            $submac!(i, $($args)*)
-        }
-    );
-    (pub $name:ident<$t:ty>, $submac:ident!( $($args:tt)* )) => (
-        pub fn $name( i: nom::types::CompleteByteSlice ) -> nom::IResult<nom::types::CompleteByteSlice, $t, u32> {
-            $submac!(i, $($args)*)
-        }
-    )
-}
-
 #[derive(Debug)]
-struct Annotation {
+pub struct Annotation {
     name: String, // command name
     options: Vec<Argument>,
 }
@@ -242,6 +231,19 @@ impl Annotation {
             Err(e) => bail!("{:?}", e),
         }
     }
+}
+
+pub fn parse_annotation_file(file: &str) -> Result<Vec<Annotation>> {
+    let mut ret: Vec<Annotation> = Vec::new();
+    let file = File::open(file)?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line_src = line?;
+        let ann = Annotation::new(line_src.as_ref())?;
+        ret.push(ann)
+    }
+    Ok(ret)
 }
 
 #[cfg(test)]

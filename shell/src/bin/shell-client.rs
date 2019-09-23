@@ -4,7 +4,7 @@ extern crate structopt_derive;
 use dash::dag::node;
 use dash::util::Result;
 use failure::bail;
-use shell::annotations::ast;
+use shell::annotations::old_ast;
 use std;
 use std::io::{stdin, stdout, Write};
 use structopt::StructOpt;
@@ -32,7 +32,7 @@ fn main() {
         print!(">>> ");
         let _ = stdout().flush();
         let cmd = readline();
-        match ast::parse_input(cmd.clone()) {
+        match old_ast::parse_input(cmd.clone()) {
             Ok(p) => match run_program(p, client.clone()) {
                 Ok(_) => {}
                 Err(e) => {
