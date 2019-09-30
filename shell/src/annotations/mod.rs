@@ -14,4 +14,6 @@ macro_rules! named_complete {
 pub mod annotate;
 pub mod ast;
 pub mod fileinfo;
+pub mod grammar;
 pub mod old_ast;
+pub mod parser;
