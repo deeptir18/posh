@@ -8,14 +8,14 @@ use dash::util::Result;
 use failure::bail;
 use std::collections::HashMap;
 // TODO: should this be a tree of parsers somehow?
-struct Parser<'a> {
+struct Parser {
     name: String,
     app: App,
-    num_args: u32,
+    counter: u32,
     type_map: HashMap<String, grammar::ArgType>,
 }
 
-impl<'a> Parser {
+impl Parser {
     //! Takes a Command and builds a parser out of it
     //! So we build this parser -- but how do we associate it with the type information
     //! Also for param size many -- we need to know how to parse the list (i.e. this thing will
@@ -86,6 +86,7 @@ impl<'a> Parser {
         }
 
         Ok(Parser {
+            name: cmd.command_name.clone(),
             app: app,
             type_map: type_map,
             counter: counter,
