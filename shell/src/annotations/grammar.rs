@@ -61,6 +61,8 @@
 //! invocation = command {" ", argument} // command followed by one or more arguments
 // different types to assign to command line arguments
 // is it better to just assign long option and short option together...
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ArgType {
     InputFile,
     OutputFile,
@@ -70,38 +72,40 @@ pub enum ArgType {
 }
 
 // demarcates what's in between the parameter and the list of arguments
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ParamDelim {
     Space,
     Equals,
     NoArgs, // no delim if there are no args after it
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ListSeparator {
     Space,
     Comma,
 }
-
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ParamSize {
     Zero,                // nothing following this option
     One,                 // exactly one thing following this option
     List(ListSeparator), // a list of things following this option (separated by separator)
 }
-
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Opt {
-    short: String,
-    long: String,
-    desc: String,
+    pub short: String,
+    pub long: String,
+    pub desc: String,
 }
-
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Argument {
     LoneOption(Opt),          // flag
     OptWithParam(Opt, Param), // option with an argument
     LoneParam(Param),         // free argument
 }
-
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Param {
-    param_type: ArgType, // what type is this argument
-    size: ParamSize,     // doesn't need to be a specific number, list 0, 1 or List
+    pub param_type: ArgType, // what type is this argument
+    pub size: ParamSize,     // doesn't need to be a specific number, list 0, 1 or List
 }
 
 // things to think about: how do we define order?
@@ -110,4 +114,19 @@ pub struct Param {
 pub struct Command {
     pub command_name: String,
     pub args: Vec<Argument>,
+    pub arg_keys: Vec<String>,
+}
+
+impl Command {
+    pub fn new(command_name: String, args: Vec<Argument>) -> Self {
+        let mut key_names: Vec<String> = Vec::new();
+        for i in 0..args.len() {
+            key_names.push(i.to_string());
+        }
+        Command {
+            command_name: command_name.clone(),
+            args: args,
+            arg_keys: key_names,
+        }
+    }
 }
