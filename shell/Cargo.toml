@@ -11,8 +11,8 @@ dash = { path = "../dash" }
 shellwords = "1.0.0"
 structopt="0.2.16"
 structopt-derive="0.2.16"
-clap = "2.33.0"
 slog = "2.5.2"
+clap = "2.33.0"
 failure = "0.1.5"
 nom = "^4"
 

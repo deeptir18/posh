@@ -1,9 +1,9 @@
 extern crate dash;
 extern crate shellwords;
-use super::annotate::{parse_annotation_file, Annotation, Argument, OptArg, SingleOption};
+use super::annotate::{parse_annotation_file, Annotation};
 use super::fileinfo::{parse_mount_file, FileMap};
 use super::old_ast;
-use dash::dag::{node, stream};
+use dash::dag::node;
 use dash::util::Result;
 use failure::bail;
 use nom::*;

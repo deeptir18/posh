@@ -1,39 +1,5 @@
-//! This file defines the formal grammar related to parsing annotations for execv arguments
-//! In this BNF format or whatever lol
-//! The actual *way* this is parsed doesn't really matter
-//! <name> ::= expansion
-//! for EBNF -> square brackets around an expansion [ expansion ] indicates that it's optional,
-//! e.g.:
-//! <term> ::= [ "-" ] <factor>
-//! Repetition: curly braces indicate the expression is repeated 0 or more times
-//! <args> ::= <arg> {"," <arg>} // i.e. 1 arg and maybe more args
-//! Grouping: use () to define the order of an expension
-//! <expr> ::= <term> ("+" | "-") <expr>
-//! Concatenation: , explicitly denotes concatenation
-//! base things:
-//!
-//!
-//! So need to define BASE things I want to group (terminals)
-//! And then ways to combine the terminals into more complex expressions
-//! The weird syntax that I had before is:
-//! [commandname]: OPT:-[name:a|name:b,num:1,delim:" "|name:argname,num:2,delim:"delim",is_file|...]
-//! I need to think of a way to define what my GRAMMAR is and how commands are represented
-//! Also things like -- taking in stdin? is that allowed?
-//! Commands are generally commandname, followed by some options (usually short -, long --)
-//! The single letter options could be combined
-//! We want to find a way to build a parser for a specific command so we can assign types to their
-//! input and output files -- and we can do something interesting with those types
-//! there has to be both a mapping of these concepts to how they look so the thing can be parsed
-//! and a mapping from the concepts into data structures so they can be used in the shell's
-//! execution
-//! also eventually need to think about how "params" can refer to files right?
-//! Maybe just say a single argument can refer
-//! let's assume we have words and letters
-//! How do we know about things that can be 1 or more??? I guess {} will take care of that
-//! Also -- how do we represent user provided strings?
-//!
-//!
 //! GRAMMAR to define the ANNOTATIONS
+//! This is still sort of a weird syntax -- but necessary to assign types to arguments
 //! letter = ...
 //! word = letter {letter} // multiple letters (this is just represented by a string)
 //! type = "input_file" | "output_file" | "str" | "stdin" | "stdout" // different types to assign to arguments
@@ -41,8 +7,8 @@
 //! list_separator = " " | "," // to separate a list of args
 //! short_opt = letter
 //! long_opt = word
-//! opt = short_opt,long_opt
-//! param_size = "zero" | "one" | ("many", list_separator)
+//! opt = short=[short_opt],long=[long_opt],[desc=description],[occurrences=single|multiple]
+//! param_size = "zero" | "one" | ("specific_size", size) | ("many", list_separator)
 //! arg = type,":",param_size // the type of arguments and the size of the list
 //! argument = opt | opt,param_delim,arg | arg
 //! command_name = word
@@ -53,10 +19,11 @@
 //! list_separator = " " | "," // to separate a list of args, TODO: anything?
 //! short_opt = -letter
 //! long_opt = --word
+//! param_delim = "=" | " " // equals for long opt, spaces for short
 //! opt = short_opt | long_opt // assumes - and -- are used
 //! param = word // we know what type this represents by the type assignment from the annotation
 //! params = param, {list_separator, param} // 1 or more parameters
-//! argument = opt | opt,params | params // full argument is option along with one or more params
+//! argument = opt | opt,param_delim,params | params // full argument example
 //! command = word
 //! invocation = command {" ", argument} // command followed by one or more arguments
 // different types to assign to command line arguments
@@ -67,11 +34,16 @@ pub enum ArgType {
     InputFile,
     OutputFile,
     Str,
-    Stdin,
-    Stdout,
 }
 
-// demarcates what's in between the parameter and the list of arguments
+impl Default for ArgType {
+    fn default() -> Self {
+        ArgType::Str
+    }
+}
+
+// demarcates what' s in between the parameter and the list of arguments
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ParamDelim {
     Space,
@@ -79,54 +51,118 @@ pub enum ParamDelim {
     NoArgs, // no delim if there are no args after it
 }
 
+impl Default for ParamDelim {
+    fn default() -> Self {
+        ParamDelim::Space
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ListSeparator {
     Space,
     Comma,
 }
+
+impl Default for ListSeparator {
+    fn default() -> Self {
+        ListSeparator::Comma
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ParamSize {
-    Zero,                // nothing following this option
-    One,                 // exactly one thing following this option
+    Zero,                             // nothing following this option
+    One,                              // exactly one thing following this option
+    SpecificSize(u64, ListSeparator), // a specific size
     List(ListSeparator), // a list of things following this option (separated by separator)
 }
-#[derive(Debug, PartialEq, Eq, Clone)]
+
+impl Default for ParamSize {
+    fn default() -> Self {
+        ParamSize::One
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct Opt {
     pub short: String,
     pub long: String,
     pub desc: String,
+    pub multiple: bool,
 }
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Argument {
     LoneOption(Opt),          // flag
     OptWithParam(Opt, Param), // option with an argument
     LoneParam(Param),         // free argument
 }
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+
+#[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct Param {
     pub param_type: ArgType, // what type is this argument
     pub size: ParamSize,     // doesn't need to be a specific number, list 0, 1 or List
+    pub default_value: String,
+    pub multiple: bool,
 }
 
-// things to think about: how do we define order?
-// I.e. for some commands -- certain arguments should be after certain other arguments, but for
-// others position doesn't really matter
+/// All the possible things provided in the annotation.
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Info {
+    ParamType(ArgType),
+    Size(ParamSize),
+    DefaultValue(String),
+    Delim(ParamDelim),
+    Short(String),
+    Long(String),
+    Desc(String), // I really should remove this one it's just clutter
+    Multiple,     // allow multiple occurrences or not
+}
+
+pub enum SizeInfo {
+    Num(u64),
+    Delimiter(ListSeparator),
+}
+
+/// An annotation is a command name and a vector of args
 pub struct Command {
     pub command_name: String,
     pub args: Vec<Argument>,
-    pub arg_keys: Vec<String>,
 }
 
-impl Command {
-    pub fn new(command_name: String, args: Vec<Argument>) -> Self {
-        let mut key_names: Vec<String> = Vec::new();
-        for i in 0..args.len() {
-            key_names.push(i.to_string());
-        }
+/// A ParsedCommand is a command name, with *specific* String arguments
+/// Each string argument is associated with a specific ArgType
+pub struct ParsedCommand {
+    pub command_name: String,
+    pub typed_args: Vec<(String, ArgType)>,
+}
+
+impl Clone for Command {
+    fn clone(&self) -> Self {
         Command {
-            command_name: command_name.clone(),
-            args: args,
-            arg_keys: key_names,
+            command_name: self.command_name.clone(),
+            args: self.args.iter().map(|x| x.clone()).collect(),
         }
     }
 }
+
+// TODO: need to figure out a way to parse this grammar to figure out the information about the
+// annotations
+// Maybe for now just use nom because you understand that better?
+/* Example commands:
+ * 1. cat
+ * command_name: cat
+ * args: vec![Argument::LoneParam(Param{type: input_file, size:
+ * ParamSize::List(ListSeparator::Space)})]
+ *
+ * 2. tar
+ * command_name: tar
+ * args: vec![Argument::LoneOption(Opt{short: "-x", long: "", desc: ""}),
+ *            Argument::LoneOption(Opt{short: "-v", long: "", desc: ""}),
+ *            Argument::LoneOption(Opt{short: "-c", long: "", desc: ""}),
+ *            Argument::LoneOption(Opt{short: "-z", long: "", desc: ""}),
+ *            Argument::OptWithParam(Opt{short: "-f", long: "", desc: ""},
+ *                                   Param{param_type: input_file, size: ParamSize::One}),
+ *            Argument::OptWithParam(Opt{short: "-C", long: "", desc: ""},
+ *                                   Param{param_type: input_file, size: ParamSize::One})]
+ */

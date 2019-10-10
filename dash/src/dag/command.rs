@@ -65,6 +65,7 @@ impl ShellCommandWrapper {
                 // this should never be used for stdin
                 unreachable!();
             }
+            StreamType::NoStream => {}
         }
         Ok(())
     }
@@ -100,6 +101,7 @@ impl ShellCommandWrapper {
                 self.command
                     .stdout(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
             }
+            StreamType::NoStream => {}
         }
         Ok(())
     }
@@ -135,6 +137,7 @@ impl ShellCommandWrapper {
                 self.command
                     .stderr(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
             }
+            StreamType::NoStream => {}
         }
         Ok(())
     }
