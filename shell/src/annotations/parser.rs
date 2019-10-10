@@ -40,16 +40,6 @@ impl Parser {
         }
     }
 
-    /// Validates the annotation to ensure that it implies valid parsing options.
-    /// Rules:
-    ///     - options (with or without values)  must have either -short or --long as non empty string
-    ///     - for lone parameters -- only the last one (by order in the command vector) can have
-    ///     size > 1 UNLESS (list or specific size that is more than 1):
-    ///         - the delimiter is something other than a space
-    fn validate_annotation(&self, annotation: &grammar::Command) -> Result<()> {
-        Ok(())
-    }
-
     pub fn add_annotation(&mut self, annotation: grammar::Command) {
         self.annotations.push(annotation);
     }
@@ -75,16 +65,15 @@ impl Parser {
             .author("doesn't matter"); // local variable
 
         let mut counter: u32 = annotation.args.len() as u32; // index args
+        let argname: Vec<String> = (0..counter).map(|x| x.to_string()).collect();
         for i in 0..(counter as usize) {
             match &annotation.args[i] {
                 grammar::Argument::LoneOption(opt) => {
-                    let mut arg = Arg::with_name(i.to_string());
                     app = app.arg(
                         Arg::with_name(argname[i].as_str())
                             .short(&opt.short)
                             .long(&opt.long),
                     );
-                    if opt.multiple {}
                 }
                 grammar::Argument::OptWithParam(opt, param_info) => {
                     // TODO: do something with the param_delim,
