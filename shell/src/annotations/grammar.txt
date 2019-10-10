@@ -1,0 +1,76 @@
+What information do we want to know from the annotation?
+- At an even higher level -- we want to know what files are "inputs" to this program and what files are "outputs" (and where those are located)
+- For right now -- when running this command, what type is each word in the argument given to the shell?
+    I.e. input file or output file or just plain string?
+- Later: can any of these inputs be split somehow? i.e. do multiple invocations of this command or parts of this command
+- The easiest way to know if the arguments refer to files or strings is to have a parser that knows what types of things are passed to the program
+- The parser looks at the string running the program and knows that certain options are just single flags, or are arguments followed by longer things
+- The parser knows certain arguments or certain POSITIONS in the string passed in will refer to inputs or outputs with certain "types"
+- I.e. a file, a normal string
+
+
+- The ways thing can be an "input file" or an "output file" is if it follows a certain argument or if its just a lone argument somewhere
+- This is slightly tricky because based on certain options -- the "input" and "output" could be different right?
+- I.e. if the option is -c => the input file is something but if the option is -x (to extract) the input file is something else
+
+- Maybe try to actually invoke this into Lalrpop (doesn't matter exactly what parser generator framework you're using)
+- To also have a good understanding of the structs you need to do the parsing
+- Maybe hooking it inot Lalrpop (where you have to design specific data structures) will help you
+
+How do we deal with these things that have multiple things that come after it?
+For the annotation -- the grammar needs the annotation to express if there's 0 arguments after the option, 1 or 2, and what type the options are
+And also express if the argument includes an option or is a lone string to be parsed
+
+So this grammar captures *how* things can be parsed:
+
+
+Maybe a good thing to do by the end of today is try to specifically have the grammar and the list of things that can and can not be parsed with the framework.
+
+What would the parser do for a tar command?
+
+Alright. I think this is actually a reasonable grammar?
+Also need to show them next week examples of things that's covered by the grammar.
+But my main confusion -- when they say "covered by the grammar" -- do they actually mean covered by the grammar in terms of what annotations it can parse?
+Or coverage in terms of what the resulting structs can cover in terms of what they can parse 
+
+Maybe there can be two levels to this --> there's a set of structs that deal with the annotations themselves.
+How to parse this information doesn't really matter -- but rather -- what's the grammar defined by this?
+i.e. what does this set of things cover
+
+//! GRAMMAR to define the ANNOTATIONS
+//! This file defines the formal grammar related to parsing annotations for execv arguments
+//! In this BNF format or whatever lol
+//! The actual *way* this is parsed doesn't really matter
+//! <name> ::= expansion
+//! for EBNF -> square brackets around an expansion [ expansion ] indicates that it's optional,
+//! e.g.:
+//! <term> ::= [ "-" ] <factor>
+//! Repetition: curly braces indicate the expression is repeated 0 or more times
+//! <args> ::= <arg> {"," <arg>} // i.e. 1 arg and maybe more args
+//! Grouping: use () to define the order of an expension
+//! <expr> ::= <term> ("+" | "-") <expr>
+//! Concatenation: , explicitly denotes concatenation
+//! base things:
+//!
+//!
+//! So need to define BASE things I want to group (terminals)
+//! And then ways to combine the terminals into more complex expressions
+//! The weird syntax that I had before is:
+//! [commandname]: OPT:-[name:a|name:b,num:1,delim:" "|name:argname,num:2,delim:"delim",is_file|...]
+//! I need to think of a way to define what my GRAMMAR is and how commands are represented
+//! Also things like -- taking in stdin? is that allowed?
+//! Commands are generally commandname, followed by some options (usually short -, long --)
+//! The single letter options could be combined
+//! We want to find a way to build a parser for a specific command so we can assign types to their
+//! input and output files -- and we can do something interesting with those types
+//! there has to be both a mapping of these concepts to how they look so the thing can be parsed
+//! and a mapping from the concepts into data structures so they can be used in the shell's
+//! execution
+//! also eventually need to think about how "params" can refer to files right?
+//! Maybe just say a single argument can refer
+//! let's assume we have words and letters
+//! How do we know about things that can be 1 or more??? I guess {} will take care of that
+//! Also -- how do we represent user provided strings?
+//!
+//!
+
