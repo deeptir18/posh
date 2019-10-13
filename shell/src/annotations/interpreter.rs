@@ -24,7 +24,7 @@ impl Interpreter {
         for cmd in cmds {
             if parser_map.contains_key(&cmd.command_name) {
                 let parser: &mut Parser = parser_map.get_mut(&cmd.command_name).unwrap(); // Should be safe to unwrap here
-                parser.add_annotation(cmd);
+                parser.add_annotation(cmd)?;
             } else {
                 let name = cmd.command_name.clone();
                 let mut parser = Parser::new(&name);
@@ -88,6 +88,10 @@ impl Interpreter {
     }
 
     /// Turn the parsed command into a graph node
+    /// TODO: need to handle the case where there's a *list* of args separated by comma,
+    /// but they are separate files
+    /// Because on the server -- will need to resolve that list differently
+    /// Sigh this is trickier than I thought lol
     fn interpret_types(&mut self, typed_args: ParsedCommand, op: &mut node::Node) {
         unimplemented!();
     }

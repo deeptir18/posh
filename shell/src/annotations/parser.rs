@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate dash;
 extern crate shellwords;
+extern crate itertools;
 
 use super::grammar;
 use clap::{App, Arg, ArgMatches};
@@ -9,6 +10,7 @@ use dash::util::Result;
 use failure::bail;
 use shellwords::split;
 use std::collections::HashMap;
+use itertools::free::join;
 
 /// Takes a particular invocation of a command and splits it into shell Words
 /// Arguments:
@@ -40,8 +42,65 @@ impl Parser {
         }
     }
 
-    pub fn add_annotation(&mut self, annotation: grammar::Command) {
-        self.annotations.push(annotation);
+    /// Validates an annotation.
+    /// Ensures:
+    ///     - lone options have short or long specified
+    ///     - options with params have short or long specified
+    ///     - lone params cannot have multiple values until the last one
+    fn validate(&self, annotation: &grammar::Command) -> Result<()> {
+        let mut lone_args_with_multiple = false;
+
+        for arg in annotation.args.iter() {
+            match arg {
+                grammar::Argument::LoneOption(opt) => {
+                    if (opt.short == "" && opt.long == "") {
+                        bail!("Atleast one of short or long should be specified for option.");
+                    }
+                }
+                grammar::Argument::OptWithParam(opt, param) => {
+                    if (opt.short == "" && opt.long == "") {
+                        bail!("Atleast one of short or long should be specified for option.");
+                    }
+                }
+                grammar::Argument::LoneParam(param) => {
+                    // can only have multiple args if it's the last one
+                    match param.size {
+                        grammar::ParamSize::Zero => {}
+                        grammar::ParamSize::One => {}
+                        grammar::ParamSize::SpecificSize(size, sep) => {
+                            // update this when we allow more delims
+                            if size > 1 && sep != grammar::ListSeparator::Comma {
+                                if lone_args_with_multiple {
+                                    bail!("Cannot have multiple args with size > 1");
+                                }
+                                lone_args_with_multiple = true;
+                            }
+                        }
+                        grammar::ParamSize::List(sep) => {
+                            if sep != grammar::ListSeparator::Comma {
+                                if lone_args_with_multiple {
+                                    bail!("Cannot have multiple args with size > 1");
+                                }
+                                lone_args_with_multiple = true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn add_annotation(&mut self, annotation: grammar::Command) -> Result<()> {
+        match self.validate(&annotation) {
+            Ok(_) => {
+                self.annotations.push(annotation);
+                Ok(())
+            }
+            Err(e) => {
+                bail!("Error validating annotation: {:?}", e);
+            }
+        }
     }
 
     /// Parses specific invocation of a command
@@ -60,88 +119,122 @@ impl Parser {
         ind: usize,
     ) -> Result<grammar::ParsedCommand> {
         let annotation = &self.annotations[ind];
+        let mut annotation_map: HashMap<String, usize> = Default::default();
         let mut app = App::new(annotation.command_name.clone())
             .version("1.0")
             .author("doesn't matter"); // local variable
-
-        let mut counter: u32 = annotation.args.len() as u32; // index args
-        let argname: Vec<String> = (0..counter).map(|x| x.to_string()).collect();
-        for i in 0..(counter as usize) {
-            match &annotation.args[i] {
+        let argnames: Vec<String> = (0..annotation.args.len() as u32)
+            .map(|x| x.to_string())
+            .collect();
+        for (i, argument) in annotation.args.iter().enumerate() {
+            let argname = &argnames[i];
+            let mut arg = Arg::with_name(argname);
+            annotation_map.insert(argnames[i].to_string(), i);
+            match argument {
                 grammar::Argument::LoneOption(opt) => {
-                    app = app.arg(
-                        Arg::with_name(argname[i].as_str())
-                            .short(&opt.short)
-                            .long(&opt.long),
-                    );
-                }
-                grammar::Argument::OptWithParam(opt, param_info) => {
-                    // TODO: do something with the param_delim,
-                    // TODO: need to do something with the default val
-                    let mut optarg = Arg::with_name(argname[i].as_str())
-                        .short(&opt.short)
-                        .long(&opt.long);
-                    // based on the param_info and the
-                    match param_info.size {
-                        grammar::ParamSize::Zero => {
-                            unreachable!();
-                        }
-                        grammar::ParamSize::One => {
-                            optarg = optarg.takes_value(true);
-                        }
-                        grammar::ParamSize::SpecificSize(amt, separator) => {
-                            // default delimiter should be a comma
-                            optarg = optarg.takes_value(true);
-                            optarg = optarg.number_of_values(amt);
-                            optarg = optarg.value_terminator(" ");
-                        }
-                        grammar::ParamSize::List(separator) => {
-                            optarg = optarg.takes_value(true);
-                            match separator {
-                                grammar::ListSeparator::Space => {
-                                    optarg = optarg.value_terminator(" ");
-                                }
-                                grammar::ListSeparator::Comma => {} // default
-                            }
-                        }
+                    if opt.short != "" {
+                        arg = arg.short(&opt.short);
                     }
-                    app = app.arg(optarg);
+                    if opt.long != "" {
+                        arg = arg.long(&opt.long);
+                    }
+                    if opt.multiple {
+                        arg = arg.multiple(true);
+                    }
+                    app = app.arg(arg);
                 }
-                grammar::Argument::LoneParam(param) => {
-                    // TODO: figure out the one to use here
-                    let mut optarg = Arg::with_name(argname[i].as_str());
+                grammar::Argument::OptWithParam(opt, param) => {
+                    // TODO: do something with the default value
+                    // based on the param_info and the
+                    if opt.short != "" {
+                        arg = arg.short(&opt.short);
+                    }
+                    if opt.long != "" {
+                        arg = arg.long(&opt.long);
+                    }
                     match param.size {
                         grammar::ParamSize::Zero => {
                             unreachable!();
                         }
                         grammar::ParamSize::One => {
-                            optarg = optarg.takes_value(true);
+                            arg = arg.takes_value(true);
                         }
-                        grammar::ParamSize::SpecificSize(num, separator) => {
-                            optarg = optarg.takes_value(true);
-                            optarg = optarg.number_of_values(num);
+                        grammar::ParamSize::SpecificSize(amt, separator) => {
+                            // default delimiter should be a comma
+                            arg = arg.takes_value(true);
+                            arg = arg.number_of_values(amt);
+                            match separator {
+                                // TODO: other separators
+                                grammar::ListSeparator::Comma => {
+                                    arg = arg.use_delimiter(true);
+                                    arg = arg.value_terminator(",");
+                                }
+                                _ => {}
+                            }
                         }
                         grammar::ParamSize::List(separator) => {
-                            optarg = optarg.takes_value(true);
+                            arg = arg.takes_value(true);
+                            arg = arg.multiple(true);
                             match separator {
-                                grammar::ListSeparator::Space => {
-                                    optarg = optarg.value_terminator(" ");
+                                grammar::ListSeparator::Comma => {
+                                    arg = arg.use_delimiter(true);
+                                    arg = arg.value_terminator(",");
                                 }
-                                grammar::ListSeparator::Comma => {} // default
+                                _ => {} // default
                             }
                         }
                     }
-                    app = app.arg(optarg);
+                    if opt.multiple || param.multiple {
+                        arg = arg.multiple(true);
+                    }
+                    app = app.arg(arg);
+                }
+                grammar::Argument::LoneParam(param) => {
+                    match param.size {
+                        grammar::ParamSize::Zero => {
+                            unreachable!();
+                        }
+                        grammar::ParamSize::One => {
+                            arg = arg.takes_value(true);
+                        }
+                        grammar::ParamSize::SpecificSize(num, separator) => {
+                            arg = arg.takes_value(true);
+                            arg = arg.number_of_values(num);
+                            match separator {
+                                grammar::ListSeparator::Comma => {
+                                    arg = arg.use_delimiter(true);
+                                    arg = arg.value_terminator(",");
+                                }
+                                _ => {} // default
+                            }
+                        }
+                        grammar::ParamSize::List(separator) => {
+                            arg = arg.takes_value(true);
+                            arg = arg.multiple(true);
+                            match separator {
+                                grammar::ListSeparator::Comma => {
+                                    arg = arg.use_delimiter(true);
+                                    arg = arg.value_terminator(",");
+                                }
+                                _ => {} // default
+                            }
+                        }
+                    }
+                    app = app.arg(arg);
                 }
             }
-            counter += 1;
         }
 
         // split the command and run the actual parsing
         // TODO: this function consumes the invocation, maybe we should clone it to pass it into
         // "assign types"
-        let mut matches: ArgMatches = app.get_matches_from(invocation.clone());
-        self.assign_types(invocation.clone(), &mut matches, &annotation)
+        let mut matches: ArgMatches = app.get_matches_from_safe(invocation.clone())?;
+        self.assign_types(
+            invocation.clone(),
+            &mut matches,
+            &annotation,
+            annotation_map,
+        )
     }
 
     /// Given clap's argmatches of a command invocation,
@@ -156,26 +249,98 @@ impl Parser {
         invocation: Vec<String>,
         matches: &mut ArgMatches,
         annotation: &grammar::Command,
+        annotation_map: HashMap<String, usize>,
     ) -> Result<grammar::ParsedCommand> {
+        // iterate through each of the args
+        // for each arg -- refer to which index the we are in the string by making a list of
+        // then ORDER the list by index
+        // once ordered by index, iterate via index and keep a counter of the "indices so far"
+        // to find the correct place in the string
+        // basically, everytime there's a reason why many SEPARATE args are concatenated
+        // together (i.e short indexes together
+        // then
         // ideally the parser should error out if you provide an option that ISN'T covered
+        // iterate over the matches
+        // find the STRING in the arg that corresponds to the
+        // tar -xcf next
+        // -x = 1, -c = 2, -f = 3, next = 4
+        // but here -xcf = 1, next = 2 => dif = 2
         let typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
-        for i in 0..(annotation.args.len()) {
-            let argname: String = i.to_string();
-            //match &annotation.args[i] {
-            // argname in clap is the counter
-            //}
+        let index_difference = 0;
+        // TODO: matches.args.iter() might not be publicly available
+        for arg in matches.args.iter() {
+            let match_info = arg.1;
+            let arg_info: &grammar::Argument =
+                &annotation.args[annotation_map[arg.0.clone()] as usize];
+            match arg_info {
+                // FOR NOW: assume multiple is not true, handle the case where each arg c
+                // an only
+                // appear at most once
+                grammar::Argument::LoneOption(opt) => {
+                    if opt.short != "" {
+                        typed_args.append((format!("-{}", &opt.short), grammar::ArgType::Str));
+                    } else {
+                        typed_args.append((format!("--{}", &opt.long), grammar::ArgType::Str));
+                    }
+                }
+                grammar::Argument::OptWithParam(opt, param) => {
+                    if opt.short != "" {
+                        typed_args.append((format!("-{}", &opt.short), grammar::ArgType::Str));
+                    } else {
+                        typed_args.append((format!("--{}", &opt.long), grammar::ArgType::Str));
+                    }
+
+                    let values = matches.values_of(arg.0.clone()).unwrap();
+                    match param.size {
+                        grammar::ParamSize::Zero => {
+                            unreachable!();
+                        }
+                        grammar::ParamSize::One => {
+                            typed_args.append((values[0].clone(), opt.param_type));
+                        }
+                        grammar::ParamSize::SpecificSize(amt, sep) => {
+                            // if sep is a space ==> then go get every separate arg
+                            // if sep is a list ==> then append the list of args deliminated by a
+                            // comma
+                            
+                            match sep {
+                                grammar::ListSeparator::Space {
+                                    for val in values.iter() {
+                                        typed_args.append(val.clone(), opt.param_type));
+                                    }
+                                }
+                                grammar::ListSeparator::Comma {
+                                    typed_args.append((join(values.iter(), ",")), opt.param_type));
+                                }
+                            }
+                        }
+                        grammar::ParamSize::List(sep) => {
+                            match sep {
+                                grammar::ListSeparator::Space {
+                                    for val in values.iter() {
+                                        typed_args.append(val.clone(), opt.param_type));
+                                    }
+                                }
+                                grammar::ListSeparator::Comma {
+                                    typed_args.append((join(values.iter(), ",")), opt.param_type));
+                                }
+                            }
+                        }
+                    }
+
+
+                    // find the -opt or --opt (for each occurence if multiple)
+                    // Then find the string(s) containing the following values
+                    // Assign the corresponding type to them
+                }
+                grammar::Argument::LoneParam(param) => {
+                    let indices = matches.indices_of(arg.0.clone()).unwrap();
+                    let values = matches.values_of(arg.0.clone()).unwrap();
+                    // Find the string(s) containing the values (based on the index)
+                    // Assign the corresponding type to them
+                }
+            }
         }
-        // if the arg is present, then assign all the strings corresponding to that arg with
-        // that type
-        // if it's a flag -- scan the vec for -short or --long. But if it's the short
-        // option -- then it could be concatenated with larger things (and you assign
-        // string to the entire thing)
-
-        // if it's an arg with a param -- then scan the string for -short, --long, and the
-        // words clap finds for it
-        //
-
-        // if it's a lone param -- just scan the string for these words
 
         Ok(grammar::ParsedCommand {
             command_name: self.name.clone(),

@@ -136,6 +136,12 @@ fn test_options_multiple_args() {
     let mut app = App::new("test_program").version("1.0").author("foo");
     app = app.arg(Arg::with_name("debug").short("d").long("debug"));
     app = app.arg(
+        Arg::with_name("fake")
+            .short("f")
+            .long("fake")
+            .multiple(true),
+    );
+    app = app.arg(
         Arg::with_name("input_file")
             .short("i")
             .long("input_file")
@@ -146,14 +152,25 @@ fn test_options_multiple_args() {
 
     let invocation = vec![
         "test_program".to_string(),
-        "-i".to_string(),
+        "-if".to_string(),
         "file2".to_string(),
         "file3".to_string(),
+        "-f".to_string(),
         "--".to_string(),
         "file3".to_string(),
     ];
-    match app.get_matches_from_safe(invocation) {
-        Ok(p) => println!("options multiple args: {:?}", p),
-        Err(e) => println!("options multiple args: {:?}", e),
+    let matches: Option<ArgMatches> = match app.get_matches_from_safe(invocation) {
+        Ok(p) => {
+            println!("options multiple args: {:?}", p);
+            Some(p)
+        }
+        Err(e) => {
+            println!("options multiple args: {:?}", e);
+            None
+        }
+    };
+
+    for arg in matches.unwrap().args.iter() {
+        println!("arg: 1: {:?}, 2: {:?}", arg.0, arg.1);
     }
 }
