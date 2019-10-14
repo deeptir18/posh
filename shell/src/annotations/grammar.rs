@@ -34,6 +34,8 @@ pub enum ArgType {
     InputFile,
     OutputFile,
     Str,
+    InputFileList,
+    OutputFileList,
 }
 
 impl Default for ArgType {

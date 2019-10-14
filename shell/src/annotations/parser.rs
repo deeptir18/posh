@@ -266,8 +266,8 @@ impl Parser {
         // -x = 1, -c = 2, -f = 3, next = 4
         // but here -xcf = 1, next = 2 => dif = 2
         let typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
-        let index_difference = 0;
         // TODO: matches.args.iter() might not be publicly available
+        // so might need to manually make this list
         for arg in matches.args.iter() {
             let match_info = arg.1;
             let arg_info: &grammar::Argument =
@@ -302,42 +302,93 @@ impl Parser {
                             // if sep is a space ==> then go get every separate arg
                             // if sep is a list ==> then append the list of args deliminated by a
                             // comma
+                            let mut assigned_type: grammar::ArgType = opt.param_type;
+                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::InputFileList;
+                            }
+                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::OutputFileList;
+                            }
                             
                             match sep {
                                 grammar::ListSeparator::Space {
                                     for val in values.iter() {
-                                        typed_args.append(val.clone(), opt.param_type));
+                                        typed_args.append(val.clone(), assigned_type));
                                     }
                                 }
                                 grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")), opt.param_type));
+                                    typed_args.append((join(values.iter(), ",")), assigned_type));
                                 }
                             }
                         }
                         grammar::ParamSize::List(sep) => {
+                            let mut assigned_type: grammar::ArgType = opt.param_type;
+                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::InputFileList;
+                            }
+                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::OutputFileList;
+                            }
                             match sep {
                                 grammar::ListSeparator::Space {
                                     for val in values.iter() {
-                                        typed_args.append(val.clone(), opt.param_type));
+                                        typed_args.append(val.clone(), assigned_type));
                                     }
                                 }
                                 grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")), opt.param_type));
+                                    typed_args.append((join(values.iter(), ",")),assigned_type));
                                 }
                             }
                         }
                     }
 
 
-                    // find the -opt or --opt (for each occurence if multiple)
-                    // Then find the string(s) containing the following values
-                    // Assign the corresponding type to them
                 }
                 grammar::Argument::LoneParam(param) => {
                     let indices = matches.indices_of(arg.0.clone()).unwrap();
                     let values = matches.values_of(arg.0.clone()).unwrap();
-                    // Find the string(s) containing the values (based on the index)
-                    // Assign the corresponding type to them
+                    match param.size {
+                        grammar::ParamSize::Zero => { unreachable!(); },
+                        grammar::ParamSize::One => {
+                            typed_args.append(values[0].clone(), param.param_type);  
+                        }
+                        grammar::ParamSize::SpecificSize(num, sep) => {
+                            let mut assigned_type: grammar::ArgType = opt.param_type;
+                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::InputFileList;
+                            }
+                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::OutputFileList;
+                            }
+                            match sep {
+                                grammar::ListSeparator::Space {
+                                    for value in values.iter() {
+                                        typed_args.append(value.clone(), assigned_type); }
+                                    }
+                                grammar::ListSeparator::Comma {
+                                    typed_args.append((join(values.iter(), ",")), assigned_type);
+                                }
+                            }
+                        }
+                        grammar::ParamSize::List(sep) => {
+                            let mut assigned_type: grammar::ArgType = opt.param_type;
+                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::InputFileList;
+                            }
+                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                                assigned_type = grammar::ArgType::OutputFileList;
+                            }
+                            match sep {
+                                grammar::ListSeparator::Space {
+                                    for value in values.iter() {
+                                        typed_args.append(value.clone(), assigned_type; }
+                                    }
+                                grammar::ListSeparator::Comma {
+                                    typed_args.append((join(values.iter(), ",")), assigned_type);
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

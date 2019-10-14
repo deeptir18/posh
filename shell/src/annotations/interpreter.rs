@@ -84,15 +84,35 @@ impl Interpreter {
             // now add op to the program
             program.add_op(op);
         }
+        self.assign_location(prog);
         Ok(program)
     }
 
     /// Turn the parsed command into a graph node
-    /// TODO: need to handle the case where there's a *list* of args separated by comma,
-    /// but they are separate files
-    /// Because on the server -- will need to resolve that list differently
-    /// Sigh this is trickier than I thought lol
+    /// Using the mount information and the file information -- turn the typed arguments into a
+    /// graph node
+    /// Need to decide:
+    /// - What arguments are *FileStreams*
+    /// - If it needs to be opened on the remote machine -- need to strip the prefix
+    ///     - If it's a *list* of files, need to strip the prefix on each
+    ///     - Need to fully RESOLVE the file first if it's a relative path to do the match
+    ///     - Server program would need to resolve it there
+    /// -  
     fn interpret_types(&mut self, typed_args: ParsedCommand, op: &mut node::Node) {
+        unimplemented!();
+        // iterate through the typed arg and add opargs, assigning resolved FileStream args
+        // whenever necessary
+        // This involves looking at the mount information and seeing if files match any of those
+        // mounts
+        // What would change if this was not the nfs backend but the nfs ec2 backend?
+        // - Maybe ask phil if it's a good idea to be implementing this now with the NFS example in
+        // mind
+        // - Or thinking about other backends too
+        // With the ec2-s3 backend ==> theoretically if it's mounted you'd do the same thing? but
+        // resolve it differently
+    }
+
+    fn assign_location(&mut self, prog: &mut node::Program) {
         unimplemented!();
     }
 }
