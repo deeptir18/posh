@@ -12,6 +12,23 @@ pub struct Program {
     operations: Vec<Node>,
 }
 
+/*struct IterProgram {
+    inner: &Node,
+    pos: usize,
+}
+
+impl Iterator for IterProgram {
+    type Item = &Node;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.pos >= self.inner.len() {
+            None
+        } else {
+            self.pos += 1;
+            self.inner.get(self.pos - 1)
+        }
+    }
+}*/
+
 /// Where a single operation is executed
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum ExecutionLocation {
@@ -43,6 +60,22 @@ impl Default for OpAction {
 pub enum OpArg {
     Stream(stream::DataStream),
     Arg(String),
+}
+
+impl OpArg {
+    pub fn is_local_file(&self) -> bool {
+        match &*self {
+            OpArg::Stream(datastream) => match datastream.get_type() {
+                stream::StreamType::LocalFile => {
+                    return true;
+                }
+                _ => {
+                    return false;
+                }
+            },
+            _ => return false,
+        }
+    }
 }
 
 /// Node is the execution of a single command
@@ -107,6 +140,21 @@ impl Node {
     /// Adds an argument to the command's inputs
     pub fn add_arg(&mut self, arg: OpArg) {
         self.arguments.push(arg);
+    }
+
+    pub fn has_local_dependencies(&self) -> bool {
+        for arg in self.arguments.iter() {
+            if arg.is_local_file() {
+                return true;
+            }
+        }
+        match self.stdin.stream_type {
+            stream::StreamType::LocalFile => {
+                return true;
+            }
+            _ => {}
+        }
+        return false;
     }
 
     pub fn set_stderr(&mut self, datastream: stream::DataStream) {
@@ -205,6 +253,17 @@ impl Program {
     // TODO: need to figure out how to write tests for this class
     pub fn new(ops: Vec<Node>) -> Self {
         Program { operations: ops }
+    }
+
+    pub fn len(&self) -> usize {
+        self.operations.len()
+    }
+
+    pub fn get_mut(&mut self, ind: usize) -> Option<&mut Node> {
+        if ind < self.operations.len() {
+            return self.operations.get_mut(ind);
+        }
+        None
     }
 
     pub fn add_op(&mut self, op: Node) {

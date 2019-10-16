@@ -33,6 +33,21 @@ impl DataStream {
         }
     }
 
+    pub fn strip_prefix(stream_type: StreamType, full_path: &str, mount: &str) -> Result<Self> {
+        let mut path = Path::new(full_path);
+        path = path.strip_prefix(mount)?;
+        let loc = match path.to_str() {
+            Some(p) => p,
+            None => {
+                bail!("Failed to strip prefix {} from {}", mount, full_path);
+            }
+        };
+        Ok(DataStream {
+            stream_type: stream_type,
+            name: loc.to_string(),
+        })
+    }
+
     pub fn prepend_directory(&self, directory: &str) -> Result<String> {
         match Path::new(directory)
             .join(self.name.clone())
@@ -50,5 +65,9 @@ impl DataStream {
 
     pub fn get_type(&self) -> StreamType {
         self.stream_type
+    }
+
+    pub fn set_stream_type(&mut self, stream_type: StreamType) {
+        self.stream_type = stream_type;
     }
 }

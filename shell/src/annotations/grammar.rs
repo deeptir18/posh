@@ -127,6 +127,7 @@ pub enum SizeInfo {
 }
 
 /// An annotation is a command name and a vector of args
+/// TODO: impl Iter (?)
 pub struct Command {
     pub command_name: String,
     pub args: Vec<Argument>,

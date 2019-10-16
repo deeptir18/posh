@@ -1,16 +1,16 @@
 extern crate clap;
 extern crate dash;
-extern crate shellwords;
 extern crate itertools;
+extern crate shellwords;
 
 use super::grammar;
 use clap::{App, Arg, ArgMatches};
 use dash::dag::{node, stream};
 use dash::util::Result;
 use failure::bail;
+use itertools::free::join;
 use shellwords::split;
 use std::collections::HashMap;
-use itertools::free::join;
 
 /// Takes a particular invocation of a command and splits it into shell Words
 /// Arguments:
@@ -265,7 +265,7 @@ impl Parser {
         // tar -xcf next
         // -x = 1, -c = 2, -f = 3, next = 4
         // but here -xcf = 1, next = 2 => dif = 2
-        let typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
+        let mut typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
         // TODO: matches.args.iter() might not be publicly available
         // so might need to manually make this list
         for arg in matches.args.iter() {
@@ -278,16 +278,16 @@ impl Parser {
                 // appear at most once
                 grammar::Argument::LoneOption(opt) => {
                     if opt.short != "" {
-                        typed_args.append((format!("-{}", &opt.short), grammar::ArgType::Str));
+                        typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
                     } else {
-                        typed_args.append((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
                     }
                 }
                 grammar::Argument::OptWithParam(opt, param) => {
                     if opt.short != "" {
-                        typed_args.append((format!("-{}", &opt.short), grammar::ArgType::Str));
+                        typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
                     } else {
-                        typed_args.append((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
                     }
 
                     let values = matches.values_of(arg.0.clone()).unwrap();
@@ -296,95 +296,73 @@ impl Parser {
                             unreachable!();
                         }
                         grammar::ParamSize::One => {
-                            typed_args.append((values[0].clone(), opt.param_type));
+                            values.for_each(|val| {
+                                typed_args.push((val.to_string(), param.param_type));
+                            });
                         }
-                        grammar::ParamSize::SpecificSize(amt, sep) => {
+                        grammar::ParamSize::SpecificSize(_, sep)
+                        | grammar::ParamSize::List(sep) => {
                             // if sep is a space ==> then go get every separate arg
-                            // if sep is a list ==> then append the list of args deliminated by a
+                            // if sep is a list ==> then push the list of args deliminated by a
                             // comma
-                            let mut assigned_type: grammar::ArgType = opt.param_type;
-                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                            let mut assigned_type: grammar::ArgType = param.param_type;
+                            if param.param_type == grammar::ArgType::InputFile
+                                && sep == grammar::ListSeparator::Comma
+                            {
                                 assigned_type = grammar::ArgType::InputFileList;
                             }
-                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                            if param.param_type == grammar::ArgType::OutputFile
+                                && sep == grammar::ListSeparator::Comma
+                            {
                                 assigned_type = grammar::ArgType::OutputFileList;
                             }
-                            
+
                             match sep {
-                                grammar::ListSeparator::Space {
-                                    for val in values.iter() {
-                                        typed_args.append(val.clone(), assigned_type));
-                                    }
+                                grammar::ListSeparator::Space => {
+                                    values.for_each(|val| {
+                                        typed_args.push((val.to_string(), assigned_type));
+                                    });
                                 }
-                                grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")), assigned_type));
-                                }
-                            }
-                        }
-                        grammar::ParamSize::List(sep) => {
-                            let mut assigned_type: grammar::ArgType = opt.param_type;
-                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
-                                assigned_type = grammar::ArgType::InputFileList;
-                            }
-                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
-                                assigned_type = grammar::ArgType::OutputFileList;
-                            }
-                            match sep {
-                                grammar::ListSeparator::Space {
-                                    for val in values.iter() {
-                                        typed_args.append(val.clone(), assigned_type));
-                                    }
-                                }
-                                grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")),assigned_type));
+                                grammar::ListSeparator::Comma => {
+                                    typed_args.push((join(values, ","), assigned_type));
                                 }
                             }
                         }
                     }
-
-
                 }
                 grammar::Argument::LoneParam(param) => {
                     let indices = matches.indices_of(arg.0.clone()).unwrap();
                     let values = matches.values_of(arg.0.clone()).unwrap();
                     match param.size {
-                        grammar::ParamSize::Zero => { unreachable!(); },
+                        grammar::ParamSize::Zero => {
+                            unreachable!();
+                        }
                         grammar::ParamSize::One => {
-                            typed_args.append(values[0].clone(), param.param_type);  
+                            values.for_each(|val| {
+                                typed_args.push((val.to_string(), param.param_type));
+                            });
                         }
-                        grammar::ParamSize::SpecificSize(num, sep) => {
-                            let mut assigned_type: grammar::ArgType = opt.param_type;
-                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
+                        grammar::ParamSize::SpecificSize(_, sep)
+                        | grammar::ParamSize::List(sep) => {
+                            let mut assigned_type: grammar::ArgType = param.param_type;
+                            if param.param_type == grammar::ArgType::InputFile
+                                && sep == grammar::ListSeparator::Comma
+                            {
                                 assigned_type = grammar::ArgType::InputFileList;
                             }
-                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
+                            if param.param_type == grammar::ArgType::OutputFile
+                                && sep == grammar::ListSeparator::Comma
+                            {
                                 assigned_type = grammar::ArgType::OutputFileList;
                             }
                             match sep {
-                                grammar::ListSeparator::Space {
-                                    for value in values.iter() {
-                                        typed_args.append(value.clone(), assigned_type); }
-                                    }
-                                grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")), assigned_type);
+                                grammar::ListSeparator::Space => {
+                                    values.for_each(|val| {
+                                        typed_args.push((val.to_string(), assigned_type));
+                                    });
                                 }
-                            }
-                        }
-                        grammar::ParamSize::List(sep) => {
-                            let mut assigned_type: grammar::ArgType = opt.param_type;
-                            if opt.param_type == grammar::ArgType::InputFile && sep = grammar::ListSeparator::Comma {
-                                assigned_type = grammar::ArgType::InputFileList;
-                            }
-                            if opt.param_type == grammar::ArgType::OutputFile && sep = grammar::ListSeparator::Comma {
-                                assigned_type = grammar::ArgType::OutputFileList;
-                            }
-                            match sep {
-                                grammar::ListSeparator::Space {
-                                    for value in values.iter() {
-                                        typed_args.append(value.clone(), assigned_type; }
-                                    }
-                                grammar::ListSeparator::Comma {
-                                    typed_args.append((join(values.iter(), ",")), assigned_type);
+                                grammar::ListSeparator::Comma => {
+                                    typed_args.push((join(values, ","), assigned_type));
                                 }
                             }
                         }
