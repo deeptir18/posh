@@ -316,7 +316,7 @@ named_complete!(
         tag!("(") >> param: parse_param >> tag!(")") >> opt!(tag!(",")) >> (param)
     ))
 );
-/// Lone Params
+
 named_complete!(
     parse_params<Result<Vec<Argument>>>,
     map!(
@@ -341,7 +341,6 @@ named_complete!(
     )
 );
 
-/// Options followed by parameters
 named_complete!(
     parse_opt_with_params<Result<Vec<Argument>>>,
     map!(
@@ -369,7 +368,6 @@ named_complete!(
     )
 );
 
-/// Lone flags
 named_complete!(
     parse_flags<Result<Vec<Argument>>>,
     map!(
@@ -499,6 +497,7 @@ mod tests {
         assert_eq!(n, Info::Size(ParamSize::Zero));
 
         let (_, n2): (CompleteByteSlice, Info) = parse_size(CompleteByteSlice(b"size:1")).unwrap();
+        assert_eq!(n2, Info::Size(ParamSize::One));
 
         let (_, n3): (CompleteByteSlice, Info) =
             parse_size(CompleteByteSlice(b"size:list(list_separator:( ))")).unwrap();

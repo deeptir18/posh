@@ -1,7 +1,7 @@
 extern crate dash;
 
 use dash::util::Result;
-use failure::bail;
+//use failure::bail;
 
 use super::annotation_parser::parse_annotation_file;
 use super::fileinfo::FileMap;
@@ -28,7 +28,7 @@ impl Interpreter {
             } else {
                 let name = cmd.command_name.clone();
                 let mut parser = Parser::new(&name);
-                parser.add_annotation(cmd);
+                parser.add_annotation(cmd)?;
                 parser_map.insert(name, parser);
             }
         }
@@ -42,8 +42,8 @@ impl Interpreter {
     pub fn parse_command(&mut self, command: &str) -> Result<node::Program> {
         // shell level parser
         let mut program: node::Program = Default::default();
-        let mut shell_program: Vec<(node::Node, Vec<String>)> =
-            shell_interpreter::shell_split(command)?;
+        let shell_program: Vec<(node::Node, Vec<String>)> =
+            shell_interpreter::shell_split(command, &self.filemap)?;
         for (mut op, args) in shell_program {
             // if no args, just continue
             if args.len() == 0 {
@@ -118,14 +118,14 @@ impl Interpreter {
         // local
         // Otherwise, everything can be remote
         let mut any_local = false;
-        for i in (0..prog.len()) {
+        for i in 0..prog.len() {
             let op: &mut node::Node = prog.get_mut(i).unwrap();
             if op.has_local_dependencies() {
                 any_local = true;
             }
         }
 
-        for i in (0..prog.len()) {
+        for i in 0..prog.len() {
             let location: node::ExecutionLocation = match any_local {
                 true => node::ExecutionLocation::Client,
                 false => node::ExecutionLocation::StorageServer,
@@ -134,4 +134,32 @@ impl Interpreter {
             op.set_location(location);
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    fn get_test_filemap() -> FileMap {
+        let mut map: HashMap<String, String> = HashMap::default();
+        map.insert("/d/c/".to_string(), "127.0.0.1".to_string());
+        FileMap::construct(map)
+    }
+
+    fn get_test_parser() -> HashMap<String, Parser> {
+        let mut parsers: HashMap<String, Parser> = HashMap::default();
+        parsers
+    }
+
+    fn get_test_interpreter() -> Interpreter {
+        Interpreter {
+            parsers: get_test_parser(),
+            filemap: get_test_filemap(),
+        }
+    }
+
+    #[test]
+    fn test_parse_command() {
+        assert!(false);
+    }
+
 }

@@ -1,15 +1,15 @@
 extern crate dash;
 extern crate shellwords;
 
+use super::fileinfo::FileMap;
 use dash::dag::{node, stream};
 use dash::util::Result;
 use failure::bail;
 use shellwords::split;
-
 /// Splits command into different stdin, stdout.
 /// Creates node::Program where args are just string args.
 /// Next steps will take the args and modify them.
-pub fn shell_split(command: &str) -> Result<Vec<(node::Node, Vec<String>)>> {
+pub fn shell_split(command: &str, filemap: &FileMap) -> Result<Vec<(node::Node, Vec<String>)>> {
     let shell_split = match split(&command) {
         Ok(s) => s,
         Err(e) => bail!("Mismatched quotes error: {:?}", e),
@@ -19,7 +19,7 @@ pub fn shell_split(command: &str) -> Result<Vec<(node::Node, Vec<String>)>> {
     let mut ops: Vec<(node::Node, Vec<String>)> = Vec::new();
     for (i, x) in piped_commands.iter().enumerate() {
         let is_last: bool = i == piped_commands.len() - 1;
-        match shell_parse(x.clone(), is_last, i) {
+        match shell_parse(x.clone(), is_last, i, filemap) {
             Ok(op) => {
                 ops.push(op);
             }
@@ -72,6 +72,7 @@ fn shell_parse(
     mut command: Vec<String>,
     is_last: bool,
     idx: usize,
+    filemap: &FileMap,
 ) -> Result<(node::Node, Vec<String>)> {
     if command.len() == 0 {
         bail!("{:?} did not have initial base_command", command);
@@ -99,11 +100,11 @@ fn shell_parse(
 
     // look for stdout, stderr and stdin redirection
     // TODO: can add in support for more complicated things like >>
-    let stdout_arg = get_arg(&command, ">", stdout_default)?;
+    let stdout_arg = get_arg(&command, ">", stdout_default, filemap)?;
     op.set_stdout(stdout_arg);
-    let stderr_arg = get_arg(&command, "2>", stderr_default)?;
+    let stderr_arg = get_arg(&command, "2>", stderr_default, filemap)?;
     op.set_stderr(stderr_arg);
-    let stdin_arg = get_arg(&command, "<", stdin_default)?;
+    let stdin_arg = get_arg(&command, "<", stdin_default, filemap)?;
     op.set_stdin(stdin_arg);
 
     // set the spawn or the run directives
@@ -119,7 +120,8 @@ fn shell_parse(
             skip_next = false;
             continue;
         }
-        if (arg.contains(">") || arg.contains("2>") || arg.contains("<")) {
+        // TODO: this doesn't seem like a correct way to do the shell parse
+        if arg.contains(">") || arg.contains("2>") || arg.contains("<") {
             skip_next = true;
             continue;
         }
@@ -133,10 +135,21 @@ fn get_arg(
     args: &Vec<String>,
     pattern: &str,
     default_val: stream::DataStream,
+    filemap: &FileMap,
 ) -> Result<stream::DataStream> {
     match get_arg_following(args, pattern) {
         Ok(s) => match s {
-            Some(a) => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
+            Some(a) => match filemap.find_match(&a) {
+                Some(fileinfo) => {
+                    let stream = stream::DataStream::strip_prefix(
+                        stream::StreamType::RemoteFile,
+                        &a,
+                        &fileinfo.0,
+                    )?;
+                    Ok(stream)
+                }
+                None => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
+            },
             None => Ok(default_val),
         },
         Err(e) => bail!(
@@ -159,4 +172,144 @@ fn get_arg_following(args: &Vec<String>, pattern: &str) -> Result<Option<String>
         }
         None => Ok(None),
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[test]
+    fn test_get_arg_following() {
+        let vec = vec!["foo".to_string(), "2>".to_string(), "foobar".to_string()];
+        assert_eq!(
+            get_arg_following(&vec, "2>").unwrap().unwrap(),
+            "foobar".to_string()
+        );
+        let vec = vec!["foo".to_string(), ">".to_string(), "foobar".to_string()];
+        match get_arg_following(&vec, "2>").unwrap() {
+            Some(_) => {
+                assert!(false, "Option should not be valid");
+            }
+            None => {}
+        }
+
+        let vec = vec!["foo".to_string(), ">".to_string()];
+        match get_arg_following(&vec, ">") {
+            Ok(_) => {
+                assert!(false, "get_arg_following should have failed.");
+            }
+            Err(_) => {}
+        }
+    }
+
+    fn get_test_filemap() -> FileMap {
+        let mut map: HashMap<String, String> = HashMap::default();
+        map.insert("/d/c/".to_string(), "127.0.0.1".to_string());
+        FileMap::construct(map)
+    }
+    #[test]
+    fn test_get_arg() {
+        let filemap = get_test_filemap();
+        let default_stream = stream::DataStream::default();
+        let args = vec![
+            "cat".to_string(),
+            "foo".to_string(),
+            ">".to_string(),
+            "/d/c/b/a".to_string(),
+        ];
+        assert_eq!(
+            get_arg(&args, ">", default_stream, &filemap).unwrap(),
+            stream::DataStream::new(stream::StreamType::RemoteFile, "b/a")
+        );
+    }
+
+    #[test]
+    fn test_split_by_pipe() {
+        let input = vec![
+            "cat".to_string(),
+            "foo".to_string(),
+            "|".to_string(),
+            "wc".to_string(),
+            "|".to_string(),
+            "sort".to_string(),
+        ];
+        let expected_output: Vec<Vec<String>> = vec![
+            vec!["cat".to_string(), "foo".to_string()],
+            vec!["wc".to_string()],
+            vec!["sort".to_string()],
+        ];
+        assert_eq!(split_by_pipe(input), expected_output);
+    }
+
+    #[test]
+    fn test_shell_parse() {
+        let args = vec![
+            "cat".to_string(),
+            "foo".to_string(),
+            ">".to_string(),
+            "/d/c/b/a".to_string(),
+        ];
+        let filemap = get_test_filemap();
+        let expected_op = node::Node::construct(
+            "cat".to_string(),
+            vec![],
+            stream::DataStream::default(),
+            stream::DataStream::new(stream::StreamType::RemoteFile, "b/a"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Run,
+            node::ExecutionLocation::Client,
+        );
+        let expected_args = vec!["foo".to_string()];
+        assert_eq!(
+            shell_parse(args, true, 0, &filemap).unwrap(),
+            (expected_op, expected_args)
+        );
+    }
+
+    #[test]
+    fn test_shell_split() {
+        let filemap = get_test_filemap();
+        let command = "grep < /d/c/foo.txt | wc -l | sort > blah.txt";
+        let mut expected_output: Vec<(node::Node, Vec<String>)> = Vec::new();
+        expected_output.push((
+            node::Node::construct(
+                "grep".to_string(),
+                vec![],
+                stream::DataStream::new(stream::StreamType::RemoteFile, "foo.txt"),
+                stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+                stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+                node::OpAction::Spawn,
+                node::ExecutionLocation::Client,
+            ),
+            vec![],
+        ));
+        expected_output.push((
+            node::Node::construct(
+                "wc".to_string(),
+                vec![],
+                stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+                stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+                stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+                node::OpAction::Spawn,
+                node::ExecutionLocation::Client,
+            ),
+            vec!["-l".to_string()],
+        ));
+        expected_output.push((
+            node::Node::construct(
+                "sort".to_string(),
+                vec![],
+                stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+                stream::DataStream::new(stream::StreamType::LocalFile, "blah.txt"),
+                stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+                node::OpAction::Run,
+                node::ExecutionLocation::Client,
+            ),
+            vec![],
+        ));
+
+        assert_eq!(shell_split(command, &filemap).unwrap(), expected_output);
+    }
+
 }

@@ -5,7 +5,7 @@ use nom::types::CompleteByteSlice;
 use nom::*;
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, prelude::*, BufReader};
+use std::io::{prelude::*, BufReader};
 use std::path::Path;
 use std::*;
 /// Map of mount to IP addresses
@@ -26,11 +26,16 @@ named_complete!(
 );
 
 // TODO: handle relative filenames?
+// This could be a thing to ask Sadjad about
 fn in_mount(filename: &str, mount: &str) -> bool {
     Path::new(filename).starts_with(Path::new(mount))
 }
 
 impl FileMap {
+    pub fn construct(map: HashMap<String, String>) -> Self {
+        FileMap { map: map }
+    }
+
     pub fn new(mount_info: &str) -> Result<Self> {
         let mut ret: HashMap<String, String> = HashMap::default();
         let file = File::open(mount_info)?;
@@ -73,9 +78,27 @@ mod tests {
     }
 
     #[test]
-    fn test_in_mount() {
+    fn test_in_mount_basic() {
         assert_eq!(in_mount("/d/c/b/a", "/d/c"), true);
         assert_eq!(in_mount("/d/c/b/a", "/f/e"), false);
+    }
+
+    #[test]
+    fn test_find_match_basic() {
+        let mut map: HashMap<String, String> = HashMap::default();
+        map.insert("/d/c/b/a".to_string(), "127.0.0.1".to_string());
+        map.insert("/e/c/b/a".to_string(), "127.0.0.2".to_string());
+        let filemap = FileMap { map: map };
+
+        assert_eq!(
+            filemap.find_match("/d/c/b/a/0"),
+            Some(("/d/c/b/a".to_string(), "127.0.0.1".to_string()))
+        );
+        assert_eq!(
+            filemap.find_match("/e/c/b/a/0"),
+            Some(("/e/c/b/a".to_string(), "127.0.0.2".to_string()))
+        );
+        assert_eq!(filemap.find_match("/f/c/b/a/0"), None);
     }
 
 }

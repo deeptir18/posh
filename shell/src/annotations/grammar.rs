@@ -128,6 +128,7 @@ pub enum SizeInfo {
 
 /// An annotation is a command name and a vector of args
 /// TODO: impl Iter (?)
+#[derive(Debug, PartialEq, Eq)]
 pub struct Command {
     pub command_name: String,
     pub args: Vec<Argument>,
@@ -135,9 +136,16 @@ pub struct Command {
 
 /// A ParsedCommand is a command name, with *specific* String arguments
 /// Each string argument is associated with a specific ArgType
+#[derive(Debug)]
 pub struct ParsedCommand {
     pub command_name: String,
     pub typed_args: Vec<(String, ArgType)>,
+}
+
+impl ParsedCommand {
+    pub fn contains(&self, arg: (String, ArgType)) -> bool {
+        self.typed_args.iter().any(|v| v == &arg)
+    }
 }
 
 impl Clone for Command {

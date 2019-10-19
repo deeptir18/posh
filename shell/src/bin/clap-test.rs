@@ -2,12 +2,12 @@ extern crate clap;
 use clap::{App, Arg, ArgMatches};
 use std::panic;
 pub fn main() {
-    //test_normal_invocation();
-    //test_normal_invocation_grouped();
-    //test_unknown_arg();
-    //test_unnamed_arg_single();
-    //test_unnamed_arg_multiple();
-    //test_multiple_unnamed_arg();
+    test_normal_invocation();
+    test_normal_invocation_grouped();
+    test_unknown_arg();
+    test_unnamed_arg_single();
+    test_unnamed_arg_multiple();
+    test_multiple_unnamed_arg();
     test_options_multiple_args();
 }
 
