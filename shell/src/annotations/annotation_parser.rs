@@ -328,7 +328,6 @@ named_complete!(
             for opt in option_set {
                 match opt {
                     Ok(o) => {
-                        println!("o:{:?}", o);
                         ret.push(Argument::LoneParam(o));
                     }
                     Err(e) => {

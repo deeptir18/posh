@@ -74,11 +74,12 @@ fn shell_parse(
     idx: usize,
     filemap: &FileMap,
 ) -> Result<(node::Node, Vec<String>)> {
+    let mut args: Vec<String> = Vec::new();
     if command.len() == 0 {
         bail!("{:?} did not have initial base_command", command);
     }
     let base_command: String = command.remove(0);
-
+    args.push(base_command.clone());
     let mut op: node::Node = Default::default();
     op.set_name(&base_command);
 
@@ -113,7 +114,6 @@ fn shell_parse(
     } else {
         op.set_action(node::OpAction::Run);
     }
-    let mut args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for arg in command {
         if skip_next {
@@ -260,7 +260,7 @@ mod test {
             node::OpAction::Run,
             node::ExecutionLocation::Client,
         );
-        let expected_args = vec!["foo".to_string()];
+        let expected_args = vec!["cat".to_string(), "foo".to_string()];
         assert_eq!(
             shell_parse(args, true, 0, &filemap).unwrap(),
             (expected_op, expected_args)
@@ -282,7 +282,7 @@ mod test {
                 node::OpAction::Spawn,
                 node::ExecutionLocation::Client,
             ),
-            vec![],
+            vec!["grep".to_string()],
         ));
         expected_output.push((
             node::Node::construct(
@@ -294,7 +294,7 @@ mod test {
                 node::OpAction::Spawn,
                 node::ExecutionLocation::Client,
             ),
-            vec!["-l".to_string()],
+            vec!["wc".to_string(), "-l".to_string()],
         ));
         expected_output.push((
             node::Node::construct(
@@ -306,7 +306,7 @@ mod test {
                 node::OpAction::Run,
                 node::ExecutionLocation::Client,
             ),
-            vec![],
+            vec!["sort".to_string()],
         ));
 
         assert_eq!(shell_split(command, &filemap).unwrap(), expected_output);

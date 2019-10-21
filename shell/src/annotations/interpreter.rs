@@ -58,7 +58,7 @@ impl Interpreter {
 
                 // use the parser to turn the String args into "types"
                 let typed_args = parser.parse_command(args)?;
-
+                println!("typed args: {:?}", typed_args);
                 // interpret typed arguments and add them to the op
                 self.interpret_types(typed_args, &mut op)?;
             } else {
@@ -145,8 +145,41 @@ mod test {
         FileMap::construct(map)
     }
 
+    // "tar: FLAGS:[(short:o,long:option,desc:(foo foo)),(short:d,long:debug,desc:(debug mode))] OPTPARAMS:[(short:d,long:directory,type:input_file,size:1,default_value:\".\"),(short:p,long:parent,desc:(parent dir),type:str,size:1,default_value:\"..\"),]"
+    fn get_cat_parser() -> Parser {
+        let mut parser = Parser::new("cat");
+        let annotation = "cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]";
+        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+    }
+
+    fn get_grep_parser() -> Parser {
+        let mut parser = Parser::new("grep");
+        let annotation = "grep: OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
+        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+    }
+
+    fn get_sort_parser() -> Parser {
+        let mut parser = Parser::new("sort");
+        let annotation = "sort: FLAGS:[(short:r,long:reverse)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
+        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+    }
+
+    fn get_wc_parser() -> Parser {
+        let mut parser = Parser::new("wc");
+        let annotation = "wc: FLAGS:[(short:l,long:lines)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
+        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+    }
+
     fn get_test_parser() -> HashMap<String, Parser> {
         let mut parsers: HashMap<String, Parser> = HashMap::default();
+        parsers.insert("cat".to_string(), get_cat_parser());
+        parsers.insert("grep".to_string(), get_grep_parser());
+        parsers.insert("sort".to_string(), get_sort_parser());
+        parsers.insert("wc".to_string(), get_wc_parser());
         parsers
     }
 
@@ -158,8 +191,123 @@ mod test {
     }
 
     #[test]
-    fn test_parse_command() {
-        assert!(false);
+    fn test_parse_command_remote() {
+        let mut interpreter = get_test_interpreter();
+        let mut program = interpreter.parse_command(
+            "cat /d/c/b/foo.txt /d/c/bar.txt | grep -e 'a|b|c|d' | sort -r | wc > /d/c/blah.txt",
+        ).unwrap();
+        let mut expected_program = node::Program::default();
+        expected_program.add_op(node::Node::construct(
+            "cat".to_string(),
+            vec![
+                node::OpArg::Stream(stream::DataStream::new(
+                    stream::StreamType::RemoteFile,
+                    "b/foo.txt",
+                )),
+                node::OpArg::Stream(stream::DataStream::new(
+                    stream::StreamType::RemoteFile,
+                    "bar.txt",
+                )),
+            ],
+            stream::DataStream::default(),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::StorageServer,
+        ));
+
+        expected_program.add_op(node::Node::construct(
+            "grep".to_string(),
+            vec![
+                node::OpArg::Arg("-e".to_string()),
+                node::OpArg::Arg("a|b|c|d".to_string()),
+            ],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::StorageServer,
+        ));
+        expected_program.add_op(node::Node::construct(
+            "sort".to_string(),
+            vec![node::OpArg::Arg("-r".to_string())],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_2"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::StorageServer,
+        ));
+        expected_program.add_op(node::Node::construct(
+            "wc".to_string(),
+            vec![],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_2"),
+            stream::DataStream::new(stream::StreamType::RemoteFile, "blah.txt"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Run,
+            node::ExecutionLocation::StorageServer,
+        ));
+        assert_eq!(program, expected_program);
+    }
+
+    #[test]
+    fn test_parse_command_local() {
+        let mut interpreter = get_test_interpreter();
+        let mut program = interpreter
+            .parse_command(
+                "cat /d/c/b/foo.txt bar.txt | grep -e 'a|b|c|d' | sort -r | wc > /d/c/blah.txt",
+            )
+            .unwrap();
+        let mut expected_program = node::Program::default();
+        expected_program.add_op(node::Node::construct(
+            "cat".to_string(),
+            vec![
+                node::OpArg::Stream(stream::DataStream::new(
+                    stream::StreamType::RemoteFile,
+                    "b/foo.txt",
+                )),
+                node::OpArg::Stream(stream::DataStream::new(
+                    stream::StreamType::LocalFile,
+                    "bar.txt",
+                )),
+            ],
+            stream::DataStream::default(),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::Client,
+        ));
+
+        expected_program.add_op(node::Node::construct(
+            "grep".to_string(),
+            vec![
+                node::OpArg::Arg("-e".to_string()),
+                node::OpArg::Arg("a|b|c|d".to_string()),
+            ],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_0"),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::Client,
+        ));
+        expected_program.add_op(node::Node::construct(
+            "sort".to_string(),
+            vec![node::OpArg::Arg("-r".to_string())],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_1"),
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_2"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Spawn,
+            node::ExecutionLocation::Client,
+        ));
+        expected_program.add_op(node::Node::construct(
+            "wc".to_string(),
+            vec![],
+            stream::DataStream::new(stream::StreamType::Pipe, "pipe_2"),
+            stream::DataStream::new(stream::StreamType::RemoteFile, "blah.txt"),
+            stream::DataStream::new(stream::StreamType::LocalStdout, ""),
+            node::OpAction::Run,
+            node::ExecutionLocation::Client,
+        ));
+        assert_eq!(program, expected_program);
     }
 
 }

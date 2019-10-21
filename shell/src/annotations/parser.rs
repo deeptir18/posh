@@ -372,7 +372,14 @@ impl Parser {
             invocation
         );
 
-        // the command was not parsed
+        self.default_parse(invocation)
+    }
+
+    fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {
+        let command = invocation.remove(0);
+        if command != self.name {
+            bail!("Invocation does not include initial command name");
+        }
         let mut typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
         for arg in invocation {
             typed_args.push((arg, grammar::ArgType::Str));
