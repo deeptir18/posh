@@ -16,4 +16,5 @@ clap = "2.33.0"
 failure = "0.1.5"
 nom = "^4"
 itertools = "0.8.0"
+exitcode = "1.1.2"
 

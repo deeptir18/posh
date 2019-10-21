@@ -58,7 +58,6 @@ impl Interpreter {
 
                 // use the parser to turn the String args into "types"
                 let typed_args = parser.parse_command(args)?;
-                println!("typed args: {:?}", typed_args);
                 // interpret typed arguments and add them to the op
                 self.interpret_types(typed_args, &mut op)?;
             } else {

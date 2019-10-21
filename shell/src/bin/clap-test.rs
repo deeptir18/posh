@@ -1,6 +1,5 @@
 extern crate clap;
 use clap::{App, Arg, ArgMatches};
-use std::panic;
 pub fn main() {
     test_normal_invocation();
     test_normal_invocation_grouped();
