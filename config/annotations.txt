@@ -1,0 +1,6 @@
+cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]
+grep: OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
+sort: FLAGS:[(short:r,long:reverse)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
+wc: FLAGS:[(short:l,long:lines)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
+tar: FLAGS:[(short:c),(short:z)] OPTPARAMS:[(short:f,type:output_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
+tar: FLAGS:[(short:x),(short:z)] OPTPARAMS:[(short:f,type:input_file,size:1),(short:C,type:output_file,default:".")]
