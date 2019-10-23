@@ -8,13 +8,16 @@ use std::process::{Child, Command, Stdio};
 use stream::{DataStream, StreamType};
 use which;
 
+/// TODO: actually rewrite the subprocess layer from scratch
+/// There's some issues happening with this one we need to debug
 pub struct ShellCommandWrapper {
     command: Command,
     name: String,
+    location: node::ExecutionLocation,
 }
 
 impl ShellCommandWrapper {
-    pub fn new(cmd: &str) -> Result<Self> {
+    pub fn new(cmd: &str, loc: node::ExecutionLocation) -> Result<Self> {
         let cmd_path = match which::which(cmd) {
             Ok(p) => p,
             Err(e) => bail!("Could not find command: {:?}", e),
@@ -25,6 +28,7 @@ impl ShellCommandWrapper {
             // sent to standard error
             command: Command::new(cmd_path.into_os_string()),
             name: cmd.to_string(),
+            location: loc,
         })
     }
 
@@ -75,24 +79,48 @@ impl ShellCommandWrapper {
         conn: &mut TcpStream,
         folder: &str,
     ) -> Result<()> {
-        println!("stream: {}, {:?}", stream.get_name(), stream.get_type());
+        // LocalFile always refers to "on the client"
+        // RemoteFile always refers to "on the server"
+        // Whether it is a TCP connection or not is based on what the execution location of the
+        // node is
         match stream.get_type() {
             StreamType::LocalFile => {
                 // TODO: this isn't working
                 // it somehow becomes standard error
                 // Maybe this can be resolved by writing your own internal process layer
-                self.command
-                    .stdout(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
+                if self.location == node::ExecutionLocation::StorageServer {
+                    self.command
+                        .stdout(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
+                } else {
+                    let handler = match fs::File::create(stream.get_name()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", stream.get_name(), e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                }
             }
             StreamType::RemoteFile => {
-                let resolved_file = stream.prepend_directory(folder)?;
-                let handler = match fs::File::create(resolved_file.clone().as_str()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        bail!("Could not create file {} => {:?}", resolved_file, e);
-                    }
-                };
-                self.command.stdout(handler);
+                if self.location == node::ExecutionLocation::StorageServer {
+                    let resolved_file = stream.prepend_directory(folder)?;
+                    let handler = match fs::File::create(resolved_file.clone().as_str()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", resolved_file, e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                } else {
+                    // TODO: this assumes that the client has NFS access to the server
+                    let handler = match fs::File::create(stream.get_name()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", stream.get_name(), e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                }
             }
             StreamType::Pipe => {
                 self.command.stdout(Stdio::piped());
@@ -117,18 +145,39 @@ impl ShellCommandWrapper {
             StreamType::LocalFile => {
                 // TODO: also send on the file but ideally callee redirects it to a file
                 // unclear how the sender here enforces that
-                self.command
-                    .stderr(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
+                if self.location == node::ExecutionLocation::StorageServer {
+                    self.command
+                        .stdout(unsafe { Stdio::from_raw_fd(conn.as_raw_fd()) });
+                } else {
+                    let handler = match fs::File::create(stream.get_name()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", stream.get_name(), e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                }
             }
             StreamType::RemoteFile => {
-                let resolved_file = stream.prepend_directory(folder)?;
-                let handler = match fs::File::create(resolved_file.clone().as_str()) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        bail!("Could not create file {} => {:?}", resolved_file, e);
-                    }
-                };
-                self.command.stderr(handler);
+                if self.location == node::ExecutionLocation::StorageServer {
+                    let resolved_file = stream.prepend_directory(folder)?;
+                    let handler = match fs::File::create(resolved_file.clone().as_str()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", resolved_file, e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                } else {
+                    // TODO: this assumes that the client has NFS access to the server
+                    let handler = match fs::File::create(stream.get_name()) {
+                        Ok(h) => h,
+                        Err(e) => {
+                            bail!("Could not create file {} => {:?}", stream.get_name(), e);
+                        }
+                    };
+                    self.command.stdout(handler);
+                }
             }
             StreamType::Pipe => {
                 self.command.stderr(Stdio::piped());

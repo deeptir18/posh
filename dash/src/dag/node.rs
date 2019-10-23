@@ -30,7 +30,7 @@ impl Iterator for IterProgram {
 }*/
 
 /// Where a single operation is executed
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
 pub enum ExecutionLocation {
     StorageServer,
     Client,
@@ -189,7 +189,7 @@ impl Node {
             println!("op: {:?}", &self.name);
         }
         // create new command obj
-        let mut exec = command::ShellCommandWrapper::new(&self.name)?;
+        let mut exec = command::ShellCommandWrapper::new(&self.name, self.location)?;
 
         // match the "input" to the command to be a previous data stream
         // No-op if streamtype is NoStream
@@ -204,7 +204,8 @@ impl Node {
                         let resolved_file = s.prepend_directory(folder)?;
                         exec.set_arg(resolved_file.as_str());
                     } else {
-                        unreachable!();
+                        // to execute locally on the client
+                        exec.set_arg(s.get_name().as_str());
                     }
                 }
                 OpArg::Arg(a) => {
