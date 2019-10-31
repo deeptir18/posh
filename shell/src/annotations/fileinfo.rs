@@ -26,7 +26,10 @@ named_complete!(
 );
 
 // TODO: handle relative filenames?
-// This could be a thing to ask Sadjad about
+// To handle relative filenames, try to stat the file and see where the mount is
+// If the file doesn't exist, create the file and then stat it, see where the file is,
+// and delete it.
+// How do you make sure everything you deleted is correct?
 fn in_mount(filename: &str, mount: &str) -> bool {
     Path::new(filename).starts_with(Path::new(mount))
 }
