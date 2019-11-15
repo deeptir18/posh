@@ -107,9 +107,6 @@ impl ShellClient {
             rpc::ClientReturnCode::Failure => {
                 bail!("Program failed to execute on server");
             }
-            rpc::ClientReturnCode::TooBusy => {
-                bail!("Program failed to execute because the server was too busy");
-            }
         }
     }
 }

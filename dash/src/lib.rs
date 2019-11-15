@@ -5,6 +5,7 @@ extern crate serde;
 extern crate failure;
 extern crate serde_derive;
 pub mod dag;
+pub mod graph;
 pub mod runtime;
 pub mod serialize;
 pub mod util;

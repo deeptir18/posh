@@ -36,6 +36,7 @@ impl ShellCommandWrapper {
         return self.name.clone();
     }
 
+    // instead of setting stdin, you always want to copy stdin to the correct thing
     pub fn set_stdin(&mut self, stream: &mut DataStream, map: SharedPipeMap) -> Result<()> {
         match stream.get_type() {
             StreamType::RemoteFile => {
@@ -73,6 +74,9 @@ impl ShellCommandWrapper {
         }
         Ok(())
     }
+
+    // you just want to *copy* the stdout handle to be a stream
+    // virtually the same as writing it directly to the file
     pub fn set_stdout(
         &mut self,
         stream: &mut DataStream,

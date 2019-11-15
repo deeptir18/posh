@@ -152,9 +152,8 @@ impl Node {
             stream::StreamType::LocalFile => {
                 return true;
             }
-            _ => {}
+            _ => return false,
         }
-        return false;
     }
 
     pub fn set_stderr(&mut self, datastream: stream::DataStream) {
@@ -204,8 +203,7 @@ impl Node {
                         let resolved_file = s.prepend_directory(folder)?;
                         exec.set_arg(resolved_file.as_str());
                     } else {
-                        // to execute locally on the client
-                        exec.set_arg(s.get_name().as_str());
+                        unreachable!();
                     }
                 }
                 OpArg::Arg(a) => {
