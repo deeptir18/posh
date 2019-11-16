@@ -79,6 +79,7 @@ impl Rapper for ReadNode {
         &mut self,
         _pipes: SharedPipeMap,
         _network_connections: SharedStreamMap,
+        _prog_id: ProgId,
     ) -> Result<()> {
         Ok(())
     }

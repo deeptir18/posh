@@ -2,8 +2,12 @@ use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
 use program::ProgId;
+use std::io::copy;
+use std::process::{Command, Stdio};
 use stream::{IOType, SharedPipeMap, SharedStreamMap, Stream, StreamIdentifier, StreamType};
 use which::which;
+use std::mem::drop;
+
 /// CommandNodes, which have args, are either file streams OR Strings.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum NodeArg {
@@ -145,9 +149,51 @@ impl Rapper for CommandNode {
 
     fn execute(
         &mut self,
-        _pipes: SharedPipeMap,
-        _network_connections: SharedStreamMap,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+        prog_id: ProgId,
     ) -> Result<()> {
+        let mut cmd = Command::new(self.name.clone()).args(self.resolved_args.clone());
+        // TODO: can we just define the command with everything piped?
+        if self.stdin.len() > 0 {
+            cmd = cmd.stdin(Stdio::piped());
+        }
+        if self.stdout.len() > 0 {
+            cmd = cmd.stdout(Stdio::piped());
+        }
+        if self.stderr.len() > 0 {
+            cmd = cmd.stderr(Stdio::piped());
+        }
+        let mut stdin_handle = match cmd.stdin {
+            Some(h) => h,
+            Err
+        }
+        // 2: copy all stdin from the correct processes in the process map
+        for stream in self.stdin.iter() {
+            match stream.get_type() {
+                StreamType::TcpConnection(loc) => {
+                    let stream_identifier = StreamIdentifier::new(prog_id, stream, IOType::Stdout);
+                    let map = match network_connections.0.lock() {
+                        Ok(m) => m,
+                        Err(e) => bail!("Lock is poisoned: {:?}", e);
+                    };
+                    let tcp_stream = match map.get_mut(stream_identifier) {
+                        Some(t) => t,
+                        None => { bail!("No shared stream for stream identifier {:?}", stream_identifier); }
+                    };
+                    let mut tcp_stream_copy = tcp_stream.try_clone()?;
+                    drop(map);
+                    copy(&mut tcp_stream_copy, &mut stdin_handle);
+                }
+                StreamType::Piped => {}
+                _ => {
+                    println!("Stdin should not have stdout or file stream types");
+                }
+            }
+        }
+        // 3: copy stderr and stdout to either:
+        // (a) the correct tcp stream from the SharedStreamMap
+        // (b) copy the child process *completely* into the SharedStreamMap
         Ok(())
     }
 

@@ -56,8 +56,12 @@ pub trait Rapper {
 
     fn add_stderr(&mut self, stream: stream::Stream) -> Result<()>;
 
-    fn execute(&mut self, pipes: SharedPipeMap, network_connections: SharedStreamMap)
-        -> Result<()>;
+    fn execute(
+        &mut self,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+        prog_id: ProgId,
+    ) -> Result<()>;
 
     fn get_loc(&self) -> Location;
 

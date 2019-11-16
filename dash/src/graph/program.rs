@@ -3,7 +3,9 @@ use super::{cmd, read, stream, write, Location, Result};
 use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::thread;
 use stream::{SharedPipeMap, SharedStreamMap, StreamIdentifier};
+use thread::{spawn, JoinHandle};
 
 pub type NodeId = u32;
 pub type ProgId = u32;
@@ -69,11 +71,12 @@ impl Rapper for Elem {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        prog_id: ProgId,
     ) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.execute(pipes, network_connections),
-            Elem::Read(read_node) => read_node.execute(pipes, network_connections),
-            Elem::Cmd(cmd_node) => cmd_node.execute(pipes, network_connections),
+            Elem::Write(write_node) => write_node.execute(pipes, network_connections, prog_id),
+            Elem::Read(read_node) => read_node.execute(pipes, network_connections, prog_id),
+            Elem::Cmd(cmd_node) => cmd_node.execute(pipes, network_connections, prog_id),
         }
     }
 
@@ -146,6 +149,7 @@ impl Node {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        prog_id: ProgId,
     ) -> Result<()> {
         self.elem.execute(pipes, network_connections)
     }
@@ -362,6 +366,7 @@ impl Program {
     pub fn execute(&mut self, stream_map: SharedStreamMap) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
+        let node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
         for node_id in execution_order.iter() {
             let node = match self.nodes.get_mut(node_id) {
                 Some(n) => n,
@@ -370,7 +375,31 @@ impl Program {
                     node_id
                 ),
             };
-            node.execute(pipe_map.clone(), stream_map.clone())?;
+
+            // copies and such
+            let pipe_map_copy = pipe_map.clone();
+            let stream_map_copy = stream_map.clone();
+            let prog_id = self.prog_id;
+            let node_clone = node.clone();
+            node_threads.push(spawn(move || {
+                node.execute(pipe_map_copy, stream_map_copy, prog_id)
+            }));
+        }
+
+        // Join all the threads to make sure it worked
+        // TODO: is this too many threads?
+        for thread in node_threads {
+            match thread.join() {
+                Ok(res) => match res {
+                    Ok(_) => {}
+                    Err(e) => {
+                        bail!("Node failed to execute: {:?}", e);
+                    }
+                },
+                Err(e) => {
+                    bail!("Thread failed to join!");
+                }
+            }
         }
 
         Ok(())

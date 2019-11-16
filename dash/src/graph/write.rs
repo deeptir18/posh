@@ -79,6 +79,7 @@ impl Rapper for WriteNode {
         &mut self,
         _pipes: SharedPipeMap,
         _network_connections: SharedStreamMap,
+        _prog_id: ProgId,
     ) -> Result<()> {
         Ok(())
     }
