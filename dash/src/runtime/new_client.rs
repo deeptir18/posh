@@ -7,7 +7,7 @@ use failure::bail;
 use std::collections::HashMap;
 use std::net::TcpStream;
 use std::thread;
-use stream::{SharedStreamMap, StreamIdentifier};
+use stream::{NetStream, SharedStreamMap};
 use thread::JoinHandle;
 
 pub type MountMap = HashMap<Addr, String>;
@@ -41,32 +41,17 @@ impl ShellClient {
             // get all the connections (e.g., stream identifiers) this part of the graph should
             // initiate
             let outward_connections = prog.get_outward_streams(loc.clone());
-            for (to_loc, stream_identifier) in outward_connections.iter() {
+            for netstream in outward_connections.iter() {
                 let map_clone = shared_map.clone();
                 let prog_id = prog.get_id();
-                let to_loc_clone = to_loc.clone();
-                let stream_identifier_clone = stream_identifier.clone();
+                let netstream_clone = netstream.clone();
                 let port = self.port.clone();
                 setup_threads.push(match loc.clone() {
                     Location::Client => thread::spawn(move || {
-                        run_stream_setup(
-                            Location::Client,
-                            to_loc_clone,
-                            stream_identifier_clone,
-                            port,
-                            map_clone,
-                            prog_id,
-                        )
+                        run_stream_setup(netstream_clone, port, map_clone, prog_id)
                     }),
-                    Location::Server(ip) => thread::spawn(move || {
-                        run_stream_setup(
-                            Location::Server(ip.to_string()),
-                            to_loc_clone,
-                            stream_identifier_clone,
-                            port,
-                            map_clone,
-                            prog_id,
-                        )
+                    Location::Server(_ip) => thread::spawn(move || {
+                        run_stream_setup(netstream_clone, port, map_clone, prog_id)
                     }),
                 });
             }
@@ -152,16 +137,14 @@ impl ShellClient {
 /// map: SharedStreamMap - client will need to insert the resulting streams into a map in order to
 /// later use them when executing the client's portion of the program
 fn run_stream_setup(
-    from_loc: Location,
-    to_loc: Location,
-    stream_identifier: StreamIdentifier,
+    netstream: NetStream,
     port: String,
-    map: SharedStreamMap,
+    mut map: SharedStreamMap,
     prog_id: program::ProgId,
 ) -> Result<()> {
-    match from_loc {
+    match netstream.get_sending_side() {
         Location::Client => {
-            let addr = match to_loc {
+            let addr = match netstream.get_receiving_side() {
                 Location::Server(ip) => Addr::new(&ip, &port).get_addr(),
                 Location::Client => {
                     bail!("From loc and to loc are client");
@@ -170,12 +153,12 @@ fn run_stream_setup(
             let mut stream = TcpStream::connect(addr)?;
             // send a stream connection message
             // TODO: do we need to convert the stream_identifier in anyway?
-            let stream_info: rpc::NetworkStreamInfo = rpc::NetworkStreamInfo {
+            let netstream_info: rpc::NetworkStreamInfo = rpc::NetworkStreamInfo {
                 loc: Location::Client,
                 prog_id: prog_id,
-                stream_identifier: stream_identifier.clone(),
+                netstream: netstream.clone(),
             };
-            let msg = serialize(&stream_info)?;
+            let msg = serialize(&netstream_info)?;
             write_msg_and_type(msg.to_vec(), rpc::MessageType::Pipe, &mut stream)?;
 
             // wait for the success:
@@ -189,25 +172,17 @@ fn run_stream_setup(
             }
 
             // the client thread that runs the programs needs access to these streams as well
-            let mut unlocked_map = match map.0.lock() {
-                Ok(m) => m,
-                Err(e) => {
-                    bail!("Lock to insert stream was poisoned!i: {:?}", e);
-                }
-            };
-            // clone the stream and keep a copy in the shared map for the client to later use
-            // during execution
             let clone = stream.try_clone()?;
-            unlocked_map.insert(stream_identifier.clone(), clone);
+            map.insert(netstream.clone(), clone)?;
             Ok(())
         }
         Location::Server(ip) => {
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
             let info = rpc::NetworkStreamInfo {
-                loc: to_loc.clone(),
+                loc: netstream.get_receiving_side().clone(),
                 prog_id: prog_id,
-                stream_identifier: stream_identifier.clone(),
+                netstream: netstream.clone(),
             };
             let message = serialize(&info)?;
             write_msg_and_type(

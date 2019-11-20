@@ -4,7 +4,7 @@ use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::thread;
-use stream::{SharedPipeMap, SharedStreamMap, StreamIdentifier};
+use stream::{DashStream, IOType, NetStream, SharedPipeMap, SharedStreamMap};
 use thread::{spawn, JoinHandle};
 
 pub type NodeId = u32;
@@ -19,7 +19,7 @@ pub enum Elem {
 }
 
 impl Rapper for Elem {
-    fn get_stdin(&self) -> Vec<stream::Stream> {
+    fn get_stdin(&self) -> Vec<DashStream> {
         match self {
             Elem::Write(write_node) => write_node.get_stdin(),
             Elem::Read(read_node) => read_node.get_stdin(),
@@ -27,7 +27,7 @@ impl Rapper for Elem {
         }
     }
 
-    fn get_stdout(&self) -> Vec<stream::Stream> {
+    fn get_stdout(&self) -> Vec<DashStream> {
         match self {
             Elem::Write(write_node) => write_node.get_stdin(),
             Elem::Read(read_node) => read_node.get_stdin(),
@@ -35,7 +35,7 @@ impl Rapper for Elem {
         }
     }
 
-    fn get_stderr(&self) -> Vec<stream::Stream> {
+    fn get_stderr(&self) -> Vec<DashStream> {
         match self {
             Elem::Write(write_node) => write_node.get_stdin(),
             Elem::Read(read_node) => read_node.get_stdin(),
@@ -43,7 +43,7 @@ impl Rapper for Elem {
         }
     }
 
-    fn add_stdin(&mut self, stream: stream::Stream) -> Result<()> {
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
         match self {
             Elem::Write(write_node) => write_node.add_stdin(stream),
             Elem::Read(read_node) => read_node.add_stdin(stream),
@@ -51,7 +51,7 @@ impl Rapper for Elem {
         }
     }
 
-    fn add_stdout(&mut self, stream: stream::Stream) -> Result<()> {
+    fn add_stdout(&mut self, stream: DashStream) -> Result<()> {
         match self {
             Elem::Write(write_node) => write_node.add_stdout(stream),
             Elem::Read(read_node) => read_node.add_stdout(stream),
@@ -59,7 +59,7 @@ impl Rapper for Elem {
         }
     }
 
-    fn add_stderr(&mut self, stream: stream::Stream) -> Result<()> {
+    fn add_stderr(&mut self, stream: DashStream) -> Result<()> {
         match self {
             Elem::Write(write_node) => write_node.add_stderr(stream),
             Elem::Read(read_node) => read_node.add_stderr(stream),
@@ -71,25 +71,19 @@ impl Rapper for Elem {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
-        prog_id: ProgId,
     ) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.execute(pipes, network_connections, prog_id),
-            Elem::Read(read_node) => read_node.execute(pipes, network_connections, prog_id),
-            Elem::Cmd(cmd_node) => cmd_node.execute(pipes, network_connections, prog_id),
+            Elem::Write(write_node) => write_node.execute(pipes, network_connections),
+            Elem::Read(read_node) => read_node.execute(pipes, network_connections),
+            Elem::Cmd(cmd_node) => cmd_node.execute(pipes, network_connections),
         }
     }
 
-    fn get_outward_streams(
-        &self,
-        prog_id: ProgId,
-        iotype: stream::IOType,
-        is_server: bool,
-    ) -> Vec<(Location, StreamIdentifier)> {
+    fn get_outward_streams(&self, iotype: stream::IOType, is_server: bool) -> Vec<NetStream> {
         match self {
-            Elem::Write(write_node) => write_node.get_outward_streams(prog_id, iotype, is_server),
-            Elem::Read(read_node) => read_node.get_outward_streams(prog_id, iotype, is_server),
-            Elem::Cmd(cmd_node) => cmd_node.get_outward_streams(prog_id, iotype, is_server),
+            Elem::Write(write_node) => write_node.get_outward_streams(iotype, is_server),
+            Elem::Read(read_node) => read_node.get_outward_streams(iotype, is_server),
+            Elem::Cmd(cmd_node) => cmd_node.get_outward_streams(iotype, is_server),
         }
     }
 
@@ -98,6 +92,18 @@ impl Rapper for Elem {
             Elem::Write(write_node) => write_node.get_loc(),
             Elem::Read(read_node) => read_node.get_loc(),
             Elem::Cmd(cmd_node) => cmd_node.get_loc(),
+        }
+    }
+
+    fn run_redirection(
+        &mut self,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+    ) -> Result<()> {
+        match self {
+            Elem::Write(write_node) => write_node.run_redirection(pipes, network_connections),
+            Elem::Read(read_node) => read_node.run_redirection(pipes, network_connections),
+            Elem::Cmd(cmd_node) => cmd_node.run_redirection(pipes, network_connections),
         }
     }
 
@@ -124,32 +130,34 @@ impl Node {
         self.id
     }
 
-    pub fn get_stdin(&self) -> Vec<stream::Stream> {
+    pub fn get_stdin(&self) -> Vec<DashStream> {
         self.elem.get_stdin()
     }
 
-    pub fn get_stdout(&self) -> Vec<stream::Stream> {
+    pub fn get_stdout(&self) -> Vec<DashStream> {
         self.elem.get_stdout()
     }
 
-    pub fn get_stderr(&self) -> Vec<stream::Stream> {
+    pub fn get_stderr(&self) -> Vec<DashStream> {
         self.elem.get_stderr()
     }
 
-    pub fn get_outward_streams(
-        &self,
-        prog_id: ProgId,
-        iotype: stream::IOType,
-        is_server: bool,
-    ) -> Vec<(Location, StreamIdentifier)> {
-        self.elem.get_outward_streams(prog_id, iotype, is_server)
+    pub fn get_outward_streams(&self, iotype: stream::IOType, is_server: bool) -> Vec<NetStream> {
+        self.elem.get_outward_streams(iotype, is_server)
+    }
+
+    pub fn run_redirection(
+        &mut self,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+    ) -> Result<()> {
+        self.elem.run_redirection(pipes, network_connections)
     }
 
     pub fn execute(
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
-        prog_id: ProgId,
     ) -> Result<()> {
         self.elem.execute(pipes, network_connections)
     }
@@ -360,13 +368,13 @@ impl Program {
     /// Executes a program on the current server.
     /// stream_map: SharedStreamMap that contains handles to any tcp streams needed by any nodes to
     /// execute.
-    /// folder: String that contains the prefix that should be appended to any filestream arguments
     /// when executing the node. Note that if it's a client, folder should be none; no filepaths
     /// need to be resolved.
     pub fn execute(&mut self, stream_map: SharedStreamMap) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
-        let node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
+        let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
+        // First execute any commands
         for node_id in execution_order.iter() {
             let node = match self.nodes.get_mut(node_id) {
                 Some(n) => n,
@@ -375,14 +383,28 @@ impl Program {
                     node_id
                 ),
             };
-
-            // copies and such
             let pipe_map_copy = pipe_map.clone();
             let stream_map_copy = stream_map.clone();
-            let prog_id = self.prog_id;
-            let node_clone = node.clone();
+            let mut node_clone = node.clone();
+            // This call is non-blocking
+            node_clone.execute(pipe_map_copy, stream_map_copy)?;
+        }
+
+        // Next, loop over and run redirection commands
+        for node_id in execution_order.iter() {
+            let node = match self.nodes.get_mut(node_id) {
+                Some(n) => n,
+                None => bail!(
+                    "Execution order produced node_id {:?} not in node_map",
+                    node_id
+                ),
+            };
+            let pipe_map_copy = pipe_map.clone();
+            let stream_map_copy = stream_map.clone();
+            let mut node_clone = node.clone();
+            // This call is non-blocking
             node_threads.push(spawn(move || {
-                node.execute(pipe_map_copy, stream_map_copy, prog_id)
+                node_clone.run_redirection(pipe_map_copy, stream_map_copy)
             }));
         }
 
@@ -397,7 +419,7 @@ impl Program {
                     }
                 },
                 Err(e) => {
-                    bail!("Thread failed to join!");
+                    bail!("Thread failed to join!: {:?}", e);
                 }
             }
         }
@@ -411,41 +433,21 @@ impl Program {
     /// stdout or stderr or receiving stdin from any other node).
     /// For other servers, outward streams are stdout/stderr connections to other nodes not
     /// involving the client.
-    pub fn get_outward_streams(&self, loc: Location) -> Vec<(Location, StreamIdentifier)> {
-        let mut ret: Vec<(Location, StreamIdentifier)> = Vec::new();
+    pub fn get_outward_streams(&self, loc: Location) -> Vec<NetStream> {
+        let mut ret: Vec<NetStream> = Vec::new();
         match loc {
             Location::Client => {
                 for (_id, node) in self.nodes.iter() {
                     // check for any streams that connect to the network
-                    ret.append(&mut node.get_outward_streams(
-                        self.id,
-                        stream::IOType::Stdin,
-                        false,
-                    ));
-                    ret.append(&mut node.get_outward_streams(
-                        self.id,
-                        stream::IOType::Stdout,
-                        false,
-                    ));
-                    ret.append(&mut node.get_outward_streams(
-                        self.id,
-                        stream::IOType::Stderr,
-                        false,
-                    ));
+                    ret.append(&mut node.get_outward_streams(IOType::Stdin, false));
+                    ret.append(&mut node.get_outward_streams(IOType::Stdout, false));
+                    ret.append(&mut node.get_outward_streams(IOType::Stderr, false));
                 }
             }
             Location::Server(_) => {
                 for (_id, node) in self.nodes.iter() {
-                    ret.append(&mut node.get_outward_streams(
-                        self.id,
-                        stream::IOType::Stdout,
-                        true,
-                    ));
-                    ret.append(&mut node.get_outward_streams(
-                        self.id,
-                        stream::IOType::Stderr,
-                        true,
-                    ));
+                    ret.append(&mut node.get_outward_streams(IOType::Stdout, true));
+                    ret.append(&mut node.get_outward_streams(IOType::Stderr, true));
                 }
             }
         }

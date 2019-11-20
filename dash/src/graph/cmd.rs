@@ -1,33 +1,41 @@
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
-use program::ProgId;
+use program::{NodeId, ProgId};
 use std::io::copy;
-use std::process::{Command, Stdio};
-use stream::{IOType, SharedPipeMap, SharedStreamMap, Stream, StreamIdentifier, StreamType};
+use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::thread;
+use stream::{
+    DashStream, FileStream, HandleIdentifier, IOType, NetStream, OutputHandle, SharedPipeMap,
+    SharedStreamMap,
+};
+use thread::{spawn, JoinHandle};
 use which::which;
-use std::mem::drop;
 
 /// CommandNodes, which have args, are either file streams OR Strings.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum NodeArg {
     Str(String),
-    Stream(Stream),
+    Stream(FileStream),
 }
 
 /// Node that runs binaries with the provided arguments, at the given location.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct CommandNode {
+    /// Id within the program.
+    node_id: NodeId,
+    /// Id of the program.
+    prog_id: ProgId,
     /// Name of binary program.
     name: String,
     /// arguments to pass in to the binary
     args: Vec<NodeArg>,
     /// Vector of streams that stdin comes from, in serialized order.
-    stdin: Vec<Stream>,
+    stdin: Vec<DashStream>,
     /// Vector of streams to send stdout of this program on.
-    stdout: Vec<Stream>,
+    stdout: Vec<DashStream>,
     /// Vector of streams to send stderr of this program on.
-    stderr: Vec<Stream>,
+    stderr: Vec<DashStream>,
     /// Execution location for the node.
     location: Location,
     /// Resolved args, as strings.
@@ -37,6 +45,8 @@ pub struct CommandNode {
 impl Default for CommandNode {
     fn default() -> Self {
         CommandNode {
+            node_id: Default::default(),
+            prog_id: Default::default(),
             name: Default::default(),
             args: vec![],
             stdin: vec![],
@@ -63,21 +73,21 @@ impl CommandNode {
         }
     }
 
+    /// Returns the stream identifier for the stdout, stdin, and stderr handles for *this node*
+    fn get_handle_identifier(&self, iotype: IOType) -> HandleIdentifier {
+        HandleIdentifier::new(self.prog_id, self.node_id, iotype)
+    }
+
     /// Takes the args and converts the file stream args to strings to pass in.
     fn resolve_file_args(&mut self, parent_dir: &str) -> Result<Vec<String>> {
         let mut arg_iterator = self.args.iter_mut();
         let mut ret: Vec<String> = Vec::new();
         while let Some(arg) = arg_iterator.next() {
             match arg {
-                NodeArg::Stream(s) => match s.get_type() {
-                    StreamType::File(_) => {
-                        let resolved_file = s.prepend_directory(parent_dir)?;
-                        ret.push(resolved_file);
-                    }
-                    _ => {
-                        unimplemented!();
-                    }
-                },
+                NodeArg::Stream(fs) => {
+                    fs.prepend_directory(parent_dir)?;
+                    ret.push(fs.get_name());
+                }
                 NodeArg::Str(a) => {
                     ret.push(a.clone());
                 }
@@ -88,112 +98,228 @@ impl CommandNode {
 }
 
 impl Rapper for CommandNode {
-    fn get_outward_streams(
-        &self,
-        prog_id: ProgId,
-        iotype: IOType,
-        is_server: bool,
-    ) -> Vec<(Location, StreamIdentifier)> {
-        let streams: Vec<Stream> = match iotype {
+    fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
+        let streams: Vec<DashStream> = match iotype {
             IOType::Stdin => self
                 .stdin
                 .iter()
-                .filter(|&s| stream_initiate_filter(s.clone(), is_server))
+                .filter(|&s| stream_initiate_filter(s.clone(), self.node_id, is_server))
                 .cloned()
                 .collect(),
             IOType::Stdout => self
                 .stdout
                 .iter()
-                .filter(|&s| stream_initiate_filter(s.clone(), is_server))
+                .filter(|&s| stream_initiate_filter(s.clone(), self.node_id, is_server))
                 .cloned()
                 .collect(),
             IOType::Stderr => self
                 .stderr
                 .iter()
-                .filter(|&s| stream_initiate_filter(s.clone(), is_server))
+                .filter(|&s| stream_initiate_filter(s.clone(), self.node_id, is_server))
                 .cloned()
                 .collect(),
         };
         streams
             .iter()
             .map(|s| {
-                let loc = s.get_network_connection().unwrap();
-                (loc, StreamIdentifier::new(prog_id, s.clone(), iotype))
+                let netstream_result: Option<NetStream> = s.clone().into();
+                netstream_result.unwrap()
             })
             .collect()
     }
-    fn get_stdin(&self) -> Vec<stream::Stream> {
+    fn get_stdin(&self) -> Vec<DashStream> {
         self.stdin.clone()
     }
 
-    fn get_stdout(&self) -> Vec<stream::Stream> {
+    fn get_stdout(&self) -> Vec<DashStream> {
         self.stdout.clone()
     }
 
-    fn get_stderr(&self) -> Vec<stream::Stream> {
+    fn get_stderr(&self) -> Vec<DashStream> {
         self.stderr.clone()
     }
-    fn add_stdin(&mut self, stream: Stream) -> Result<()> {
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
         self.stdin.push(stream);
         Ok(())
     }
-    fn add_stdout(&mut self, stream: Stream) -> Result<()> {
+    fn add_stdout(&mut self, stream: DashStream) -> Result<()> {
         self.stdout.push(stream);
         Ok(())
     }
 
-    fn add_stderr(&mut self, stream: Stream) -> Result<()> {
+    fn add_stderr(&mut self, stream: DashStream) -> Result<()> {
         self.stderr.push(stream);
         Ok(())
     }
 
     fn execute(
         &mut self,
-        pipes: SharedPipeMap,
-        network_connections: SharedStreamMap,
-        prog_id: ProgId,
+        mut pipes: SharedPipeMap,
+        _network_connections: SharedStreamMap,
     ) -> Result<()> {
-        let mut cmd = Command::new(self.name.clone()).args(self.resolved_args.clone());
-        // TODO: can we just define the command with everything piped?
+        let mut cmd = Command::new(self.name.clone());
+        cmd.args(self.resolved_args.clone());
+
         if self.stdin.len() > 0 {
-            cmd = cmd.stdin(Stdio::piped());
+            cmd.stdin(Stdio::piped());
         }
         if self.stdout.len() > 0 {
-            cmd = cmd.stdout(Stdio::piped());
+            cmd.stdout(Stdio::piped());
         }
         if self.stderr.len() > 0 {
-            cmd = cmd.stderr(Stdio::piped());
+            cmd.stderr(Stdio::piped());
         }
-        let mut stdin_handle = match cmd.stdin {
-            Some(h) => h,
-            Err
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                bail!("Failed to spawn child: {:?}", e);
+            }
+        };
+
+        if self.stdin.len() > 0 {
+            let stdin_handle = match child.stdin {
+                Some(h) => h,
+                None => bail!("Could not get stdin handle for proc"),
+            };
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stdin),
+                OutputHandle::Stdin(stdin_handle),
+            )?;
         }
-        // 2: copy all stdin from the correct processes in the process map
-        for stream in self.stdin.iter() {
-            match stream.get_type() {
-                StreamType::TcpConnection(loc) => {
-                    let stream_identifier = StreamIdentifier::new(prog_id, stream, IOType::Stdout);
-                    let map = match network_connections.0.lock() {
-                        Ok(m) => m,
-                        Err(e) => bail!("Lock is poisoned: {:?}", e);
-                    };
-                    let tcp_stream = match map.get_mut(stream_identifier) {
-                        Some(t) => t,
-                        None => { bail!("No shared stream for stream identifier {:?}", stream_identifier); }
-                    };
-                    let mut tcp_stream_copy = tcp_stream.try_clone()?;
-                    drop(map);
-                    copy(&mut tcp_stream_copy, &mut stdin_handle);
+
+        if self.stdout.len() > 0 {
+            let stdout_handle = match child.stdout {
+                Some(h) => h,
+                None => bail!("Could not get handle for child stdout"),
+            };
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stdout),
+                OutputHandle::Stdout(stdout_handle),
+            )?;
+        }
+
+        if self.stderr.len() > 0 {
+            let stderr_handle = match child.stderr {
+                Some(h) => h,
+                None => bail!("Could not get handle for child stderr"),
+            };
+
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stderr),
+                OutputHandle::Stderr(stderr_handle),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn run_redirection(
+        &mut self,
+        mut pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+    ) -> Result<()> {
+        let mut join_handles: Vec<(IOType, JoinHandle<Result<()>>)> = Vec::new();
+        // spawn stdin thread
+        if self.stdin.len() > 0 {
+            let stdin_prog_id = self.prog_id;
+            let stdin_handle = pipes.remove(&self.get_handle_identifier(IOType::Stdin))?;
+            let stdin_streams = self.stdin.clone();
+            let stdin_pipes = pipes.clone();
+            let stdin_connections = network_connections.clone();
+            let stdin_id = self.node_id;
+            join_handles.push((
+                IOType::Stdin,
+                spawn(move || {
+                    copy_into_stdin(
+                        stdin_id,
+                        stdin_prog_id,
+                        stdin_handle,
+                        stdin_streams,
+                        stdin_pipes,
+                        stdin_connections,
+                    )
+                }),
+            ));
+        }
+
+        // spawn stdout thread
+        if self.stdout.len() > 0 {
+            // if stdout is PIPED to another process on same machine, do not do this
+            // TODO: figure out a solution that works with multiple output streams
+            let mut piped_stdout = false;
+            for stream in self.stdout.iter() {
+                match stream {
+                    DashStream::Pipe(_) => {
+                        piped_stdout = true;
+                    }
+                    _ => {}
                 }
-                StreamType::Piped => {}
-                _ => {
-                    println!("Stdin should not have stdout or file stream types");
+            }
+            if !piped_stdout {
+                let stdout_prog_id = self.prog_id;
+                let stdout_handle = pipes.remove(&self.get_handle_identifier(IOType::Stdout))?;
+                let stdout_streams = self.stdout.clone();
+                let stdout_connections = network_connections.clone();
+                let stdout_id = self.node_id;
+                join_handles.push((
+                    IOType::Stdout,
+                    spawn(move || {
+                        copy_stdout(
+                            stdout_id,
+                            stdout_prog_id,
+                            stdout_handle,
+                            stdout_streams,
+                            stdout_connections,
+                        )
+                    }),
+                ));
+            }
+        }
+
+        // spawn stderr threads
+        if self.stderr.len() > 0 {
+            let mut piped_stderr = false;
+            for stream in self.stderr.iter() {
+                match stream {
+                    DashStream::Pipe(_) => {
+                        piped_stderr = true;
+                    }
+                    _ => {}
+                }
+            }
+            if !piped_stderr {
+                let stderr_prog_id = self.prog_id;
+                let stderr_handle = pipes.remove(&self.get_handle_identifier(IOType::Stderr))?;
+                let stderr_streams = self.stderr.clone();
+                let stderr_connections = network_connections.clone();
+                let stderr_id = self.node_id;
+                join_handles.push((
+                    IOType::Stderr,
+                    spawn(move || {
+                        copy_stderr(
+                            stderr_id,
+                            stderr_prog_id,
+                            stderr_handle,
+                            stderr_streams,
+                            stderr_connections,
+                        )
+                    }),
+                ));
+            }
+        }
+
+        for (iotype, thread) in join_handles {
+            match thread.join() {
+                Ok(res) => match res {
+                    Ok(_) => {}
+                    Err(e) => {
+                        bail!("{:?} thread joined with error: {:?}", iotype, e);
+                    }
+                },
+                Err(e) => {
+                    bail!("{:?} thread could not join: {:?}", iotype, e);
                 }
             }
         }
-        // 3: copy stderr and stdout to either:
-        // (a) the correct tcp stream from the SharedStreamMap
-        // (b) copy the child process *completely* into the SharedStreamMap
         Ok(())
     }
 
@@ -214,4 +340,137 @@ impl Rapper for CommandNode {
         resolve_file_streams(&mut self.stdin, parent_dir)?;
         Ok(())
     }
+}
+
+fn copy_into_stdin(
+    node_id: NodeId,
+    _prog_id: ProgId,
+    handle: OutputHandle,
+    stdin_streams: Vec<DashStream>,
+    mut pipes: SharedPipeMap,
+    mut network_connections: SharedStreamMap,
+) -> Result<()> {
+    let stdin_handle_option: Option<ChildStdin> = handle.into();
+    let mut stdin_handle = stdin_handle_option.unwrap();
+    for stream in stdin_streams.iter() {
+        match stream {
+            DashStream::Tcp(netstream) => {
+                // TODO: will the type here always be IOType::Stdout?
+                let mut tcp_stream = match network_connections.remove(&netstream) {
+                    Ok(s) => s,
+                    Err(e) => bail!(
+                        "Failed to find tcp stream with info {:?}: {:?}",
+                        netstream,
+                        e
+                    ),
+                };
+
+                copy(&mut tcp_stream, &mut stdin_handle)?;
+            }
+            DashStream::Pipe(pipestream) => {
+                // assert that the stdin handle is on the right of this connection
+                assert_eq!(node_id, pipestream.get_right());
+                let handle_identifier = HandleIdentifier::new(
+                    pipestream.get_left(),
+                    node_id,
+                    pipestream.get_output_type(),
+                );
+                let prev_handle = match pipes.remove(&handle_identifier) {
+                    Ok(s) => s,
+                    Err(e) => bail!(
+                        "Failed to find handle with info {:?}: {:?}",
+                        handle_identifier,
+                        e
+                    ),
+                };
+                match pipestream.get_output_type() {
+                    IOType::Stdout => {
+                        let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
+                        let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
+                        copy(&mut prev_stdout_handle, &mut stdin_handle)?;
+                    }
+                    IOType::Stderr => {
+                        let prev_stderr_handle_option: Option<ChildStderr> = prev_handle.into();
+                        let mut prev_stderr_handle = prev_stderr_handle_option.unwrap();
+                        copy(&mut prev_stderr_handle, &mut stdin_handle)?;
+                    }
+                    IOType::Stdin => {
+                        bail!("Pipestream should not have type of Stdin: {:?}", pipestream);
+                    }
+                }
+            }
+            _ => {
+                println!("Stdin should not have stdout or file stream types in input stream list.");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Copies stdout from process into the correct stream location.
+/// stdout_handle: OutputHandle of type ChildStdout
+/// stdout_streams: List of streams the process needs to copy to.
+/// network_connections: SharedStreamMap containing the shared tcp connections.
+/// Should only be used when the stdout stream redirection is *not* a pipe on the same machine,
+/// then the process that takes this process's output from stdin will claim the handle to stdout of
+fn copy_stdout(
+    _node_id: NodeId,
+    _prog_id: ProgId,
+    stdout_handle: OutputHandle,
+    stdout_streams: Vec<DashStream>,
+    mut network_connections: SharedStreamMap,
+) -> Result<()> {
+    let stdout_handle_option: Option<ChildStdout> = stdout_handle.into();
+    let mut stdout_handle = stdout_handle_option.unwrap();
+    for stream in stdout_streams.iter() {
+        match stream {
+            DashStream::Tcp(netstream) => {
+                let mut tcp_stream = match network_connections.remove(&netstream) {
+                    Ok(s) => s,
+                    Err(e) => bail!(
+                        "Failed to find tcp stream with info {:?}: {:?}",
+                        netstream,
+                        e
+                    ),
+                };
+                copy(&mut stdout_handle, &mut tcp_stream)?;
+            }
+            _ => {
+                bail!(
+                    "Should not be in copy stdout function unless stream type is TCP connection: {:?}", stream
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn copy_stderr(
+    _node_id: NodeId,
+    _prog_id: ProgId,
+    stderr_handle: OutputHandle,
+    stderr_streams: Vec<DashStream>,
+    mut network_connections: SharedStreamMap,
+) -> Result<()> {
+    let stderr_handle_option: Option<ChildStderr> = stderr_handle.into();
+    let mut stderr_handle = stderr_handle_option.unwrap();
+    for stream in stderr_streams.iter() {
+        match stream {
+            DashStream::Tcp(netstream) => {
+                let mut tcp_stream = match network_connections.remove(&netstream) {
+                    Ok(s) => s,
+                    Err(e) => bail!(
+                        "Failed to find tcp stream with info {:?}: {:?}",
+                        netstream,
+                        e
+                    ),
+                };
+                copy(&mut stderr_handle, &mut tcp_stream)?;
+            }
+            _ => {
+                bail!("Should not be in copy stderr function unless stream type is TCP connection: {:?}", stream);
+            }
+        }
+    }
+    Ok(())
 }

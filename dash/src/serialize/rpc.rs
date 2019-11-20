@@ -44,7 +44,7 @@ pub struct NetworkStreamInfo {
     /// Program Id
     pub prog_id: program::ProgId,
     /// Stream object: type and unique name
-    pub stream_identifier: stream::StreamIdentifier,
+    pub netstream: stream::NetStream,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]

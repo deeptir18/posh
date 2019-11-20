@@ -121,7 +121,7 @@ impl Server for ServerRuntime {
 fn handle_spawned_client(
     mut stream: TcpStream,
     folder_result: Result<String>,
-    stream_map: SharedStreamMap,
+    mut stream_map: SharedStreamMap,
     _debug: bool,
 ) -> Result<()> {
     let folder = match folder_result {
@@ -187,14 +187,8 @@ fn handle_spawned_client(
             };
 
             // insert this stream into the client's map
-            let mut map = match stream_map.0.lock() {
-                Ok(m) => m,
-                Err(e) => {
-                    bail!("Lock is poisoned!: {:?}", e);
-                }
-            };
             let stream_clone = stream.try_clone()?;
-            map.insert(stream_info.stream_identifier, stream_clone);
+            stream_map.insert(stream_info.netstream, stream_clone)?;
 
             // send a success message back to the sender saying this stream was inserted
             let response = serialize(&rpc::ClientReturnCode::Success)?;
