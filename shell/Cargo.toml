@@ -8,6 +8,8 @@ edition = "2018"
 
 [dependencies]
 dash = { path = "../dash" }
+serde = { version = "1.0", features = ["derive"] }
+serde_derive = "1.0"
 shellwords = "1.0.0"
 structopt="0.2.16"
 structopt-derive="0.2.16"
@@ -17,3 +19,4 @@ failure = "0.1.5"
 nom = "^4"
 itertools = "0.8.0"
 exitcode = "1.1.2"
+# conch-parser = "0.1.0" -> test to see if this can do the same types of shell parsings

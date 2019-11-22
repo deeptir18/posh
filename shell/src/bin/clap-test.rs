@@ -8,6 +8,8 @@ pub fn main() {
     test_unnamed_arg_multiple();
     test_multiple_unnamed_arg();
     test_options_multiple_args();
+
+    //test_subcommand();
 }
 
 fn test_normal_invocation() {

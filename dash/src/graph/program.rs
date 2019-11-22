@@ -374,7 +374,8 @@ impl Program {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
-        // First execute any commands
+
+        // First execute any commands, e.g. spawn the initial processes
         for node_id in execution_order.iter() {
             let node = match self.nodes.get_mut(node_id) {
                 Some(n) => n,
@@ -409,7 +410,6 @@ impl Program {
         }
 
         // Join all the threads to make sure it worked
-        // TODO: is this too many threads?
         for thread in node_threads {
             match thread.join() {
                 Ok(res) => match res {

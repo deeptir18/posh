@@ -13,6 +13,10 @@ use std::hash::Hash;
 use std::mem::drop;
 use std::sync::{Arc, Mutex};
 
+// TODO: the current design allows nodes to have multiple stdout or stderr handles,
+// but the way the code is written, it would panic if any node ever had more than 1 stderr or
+// stdout handle, because the first copy would only copy into the first output stream.
+
 /// Represents where a computation should take place, or where a stream leads to.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub enum Location {

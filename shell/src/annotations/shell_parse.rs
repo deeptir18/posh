@@ -41,12 +41,13 @@ impl ShellGraphNode {
     /// Given how we handle the filestreams, this could generate a *graph of nodes right*
     /// E.g. need to generate read and write nodes as well
     /// Sigh but also needs to add these STREAM OBJECTS.
-    pub fn generate_program_node(&self) -> Result<Program> {
+    pub fn generate_subprogram(&self) -> Result<Program> {
         let new_program = Program::default();
 
         let mut iter = self.cmd.elts.iter();
 
         while let Some(elt) = iter.next() {}
+        Ok(new_program)
     }
 }
 
@@ -124,7 +125,9 @@ impl ShellGraph {
     /// Note that we only handle a couple of small cases.
     pub fn convert_into_program(&self) -> Result<Program> {
         let prog = Program::default();
-        for (id, graph_node) in self.nodes() {}
+        for (id, graph_node) in self.nodes.iter() {
+            let subgraph = graph_node.generate_subprogram()?;
+        }
         Ok(Program::default())
     }
 

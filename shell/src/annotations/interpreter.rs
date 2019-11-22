@@ -8,7 +8,10 @@ use super::fileinfo::FileMap;
 use super::grammar::*;
 use super::parser::Parser;
 use super::shell_interpreter;
+use super::shell_parse;
 use dash::dag::{node, stream};
+use dash::graph::program;
+use program::Program;
 use std::collections::HashMap;
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
@@ -37,6 +40,16 @@ impl Interpreter {
             parsers: parser_map,
             filemap: folders,
         })
+    }
+
+    pub fn parse_cmd_graph(&self, command: &str) -> Result<Program> {
+        // make a shell split from the command
+        let shellsplit = shell_parse::ShellSplit::new(command)?;
+        // turn shell split into shell graph
+        let shellgraph = shellsplit.convert_into_shell_graph()?;
+        // turn this into node graph that can be fed into the annotation layer to be executed
+        let program = shellgraph.convert_into_program()?;
+        Ok(program)
     }
 
     pub fn parse_command(&mut self, command: &str) -> Result<node::Program> {
@@ -308,5 +321,4 @@ mod test {
         ));
         assert_eq!(program, expected_program);
     }
-
 }

@@ -311,5 +311,4 @@ mod test {
 
         assert_eq!(shell_split(command, &filemap).unwrap(), expected_output);
     }
-
 }
