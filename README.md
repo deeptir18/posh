@@ -15,3 +15,8 @@ The Dash crate includes the server program, client program and backend execution
             - But that could produce weird ordering issues (in the output)
         - Or multiple connections could be opened
             - That might run into weird port issues if too many ports are being used
+
+* Things that currently need to be fixed before the deadline:
+- Need to turn the shell graph into the new graph format
+- Need to reprogram the location algorithm
+- Then need to test the actual execution
