@@ -1,14 +1,20 @@
 extern crate dash;
 extern crate shellwords;
 
-use dash::graph::program;
+use cmd::{CommandNode, NodeArg};
+use dash::graph::{cmd, program, rapper, read, stream, write, Location};
 use dash::util::Result;
 use failure::bail;
-use program::{Elem, Node, NodeId, Program};
+use program::{Elem, NodeId, Program};
+use rapper::Rapper;
+use read::ReadNode;
 use serde::{Deserialize, Serialize};
 use shellwords::split;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use stream::{DashStream, FileStream, IOType, PipeStream};
+use write::WriteNode;
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub struct SubCommand {
     pub elts: Vec<RawShellElement>,
@@ -38,15 +44,143 @@ impl ShellGraphNode {
     /// generates a program node from the list of raw shell elements.
     /// Assumes all subcommands have been parsed already, JUST handles file redirections for stdin,
     /// stderr, and stdout.
-    /// Given how we handle the filestreams, this could generate a *graph of nodes right*
-    /// E.g. need to generate read and write nodes as well
-    /// Sigh but also needs to add these STREAM OBJECTS.
+    // Merges all the subgraphs for the piped programs,
+    // handles any links that need to be made, and adds any redirection to local Stdout/Stdin.
     pub fn generate_subprogram(&self) -> Result<Program> {
-        let new_program = Program::default();
-
+        let mut new_program = Program::default();
+        let mut cmd_node = CommandNode::default();
         let mut iter = self.cmd.elts.iter();
+        let mut stdin_nodes: Vec<ReadNode> = Vec::new();
+        let mut stdout_nodes: Vec<WriteNode> = Vec::new();
+        let mut stderr_nodes: Vec<WriteNode> = Vec::new();
 
-        while let Some(elt) = iter.next() {}
+        while let Some(elt) = iter.next() {
+            match elt {
+                RawShellElement::Str(word) => {
+                    // is it a safe assumption that the command is always at the front of list?
+                    if !cmd_node.name_set() {
+                        cmd_node.set_name(word);
+                    } else {
+                        cmd_node.add_arg(NodeArg::Str(word.to_string()));
+                    }
+                }
+                RawShellElement::Stdin => {
+                    // look for the next argument, and add a *READ NODE* prior to this node
+                    if let Some(next_elt) = iter.next() {
+                        match next_elt {
+                            RawShellElement::Str(filename) => {
+                                let mut readnode = ReadNode::default();
+                                readnode.add_stdin(DashStream::File(FileStream::new(
+                                    filename,
+                                    Location::Client,
+                                )))?;
+                                stdin_nodes.push(readnode);
+                            }
+                            _ => {
+                                bail!("Stdin in this stage can only be followed by strings");
+                            }
+                        }
+                    } else {
+                        bail!("Stdin directive without anything following!");
+                    }
+                }
+                RawShellElement::Stdout => {
+                    if let Some(next_elt) = iter.next() {
+                        match next_elt {
+                            RawShellElement::Str(filename) => {
+                                let mut writenode = WriteNode::default();
+                                writenode.add_stdout(DashStream::File(FileStream::new(
+                                    filename,
+                                    Location::Client,
+                                )))?;
+                                stdout_nodes.push(writenode);
+                            }
+                            _ => {
+                                bail!("Stdout in this stage can only be followed by strings");
+                            }
+                        }
+                    } else {
+                        bail!("Stdout directive without anything following!");
+                    }
+                }
+                RawShellElement::Stderr => {
+                    if let Some(next_elt) = iter.next() {
+                        match next_elt {
+                            RawShellElement::Str(filename) => {
+                                let mut writenode = WriteNode::default();
+                                writenode.add_stderr(DashStream::File(FileStream::new(
+                                    filename,
+                                    Location::Client,
+                                )))?;
+                                stderr_nodes.push(writenode);
+                            }
+                            _ => {
+                                bail!("Stderr in this stage can only be followed by strings");
+                            }
+                        }
+                    } else {
+                        bail!("Stderr directive without anything following!");
+                    }
+                }
+                RawShellElement::Pipe => {
+                    bail!("Should not encounter a pipe when generating a subprogram from a shell graph node, all pipes should be parsed already");
+                }
+                RawShellElement::Subcmd(subcmd) => {
+                    bail!("Should not encounter subcommand when generating a subprogram from a shell graph node: {:?}", subcmd);
+                }
+            }
+        }
+
+        let cmd_node_id = new_program.add_elem(Elem::Cmd(cmd_node));
+        for stdin in stdin_nodes.into_iter() {
+            // insert both nodes into the graph, and add an edge
+            let stdin_node_id = new_program.add_elem(Elem::Read(stdin));
+            // create a new pipe between the read node and command node, and add it to both nodes
+            let pipe = PipeStream::new(stdin_node_id, cmd_node_id, IOType::Stdout)?;
+            // add an edge between the two nodes
+            new_program.add_unique_edge(stdin_node_id, cmd_node_id);
+            // add the pipe to the stdout/stdin of both nodes
+            let cmd_elem = new_program
+                .get_mut_node(cmd_node_id)
+                .unwrap()
+                .get_mut_elem();
+            cmd_elem.add_stdin(DashStream::Pipe(pipe.clone()))?;
+            let stdin_elem = new_program
+                .get_mut_node(stdin_node_id)
+                .unwrap()
+                .get_mut_elem();
+            stdin_elem.add_stdout(DashStream::Pipe(pipe))?;
+        }
+        for stdout in stdout_nodes.into_iter() {
+            let stdout_node_id = new_program.add_elem(Elem::Write(stdout));
+            let pipe = PipeStream::new(cmd_node_id, stdout_node_id, IOType::Stdout)?;
+            new_program.add_unique_edge(cmd_node_id, stdout_node_id);
+            let cmd_elem = new_program
+                .get_mut_node(cmd_node_id)
+                .unwrap()
+                .get_mut_elem();
+            cmd_elem.add_stdout(DashStream::Pipe(pipe.clone()))?;
+            let stdout_elem = new_program
+                .get_mut_node(stdout_node_id)
+                .unwrap()
+                .get_mut_elem();
+            stdout_elem.add_stdin(DashStream::Pipe(pipe))?;
+        }
+        for stderr in stderr_nodes.into_iter() {
+            let stderr_node_id = new_program.add_elem(Elem::Write(stderr));
+            let pipe = PipeStream::new(cmd_node_id, stderr_node_id, IOType::Stderr)?;
+            new_program.add_unique_edge(cmd_node_id, stderr_node_id);
+            let cmd_elem = new_program
+                .get_mut_node(cmd_node_id)
+                .unwrap()
+                .get_mut_elem();
+            cmd_elem.add_stderr(DashStream::Pipe(pipe.clone()))?;
+            let stderr_elem = new_program
+                .get_mut_node(stderr_node_id)
+                .unwrap()
+                .get_mut_elem();
+            stderr_elem.add_stderr(DashStream::Pipe(pipe))?;
+        }
         Ok(new_program)
     }
 }
@@ -58,6 +192,8 @@ pub struct ShellLink {
 }
 
 /// Representation of ShellGraph as a connection of piped processes.
+/// Links in this graph represents processes that pipe STDOUT together.
+/// File redirections of stdin, stdout and stderr have not been parsed together yet.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct ShellGraph {
     pub nodes: HashMap<NodeId, ShellGraphNode>,
@@ -124,11 +260,56 @@ impl ShellGraph {
     /// This step parses any file redirections for stdin, stdout and stderr file redirections.
     /// Note that we only handle a couple of small cases.
     pub fn convert_into_program(&self) -> Result<Program> {
-        let prog = Program::default();
+        // generate subgraphs for each part
+        let mut subgraph_map: HashMap<NodeId, Program> = HashMap::default();
+        let mut links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
         for (id, graph_node) in self.nodes.iter() {
             let subgraph = graph_node.generate_subprogram()?;
+            subgraph_map.insert(*id, subgraph);
         }
-        Ok(Program::default())
+        for edge in self.edges.iter() {
+            // connect node 0 of each new subgraph
+            links.push(((edge.left, 0), (edge.right, 0)));
+        }
+
+        // merge all subgraphs into 1 program
+        let mut program = Program::merge_subgraphs(subgraph_map, links)?;
+
+        // now, go through and add in stdout and stderr redirections for any nodes that do not
+        // have any redirection currently
+        let mut add_output_nodes: Vec<(NodeId, IOType)> = Vec::new();
+        for (id, node) in program.get_nodes_iter() {
+            if node.get_stdout_len() == 0 {
+                add_output_nodes.push((*id, IOType::Stdout));
+            }
+            if node.get_stderr_len() == 0 {
+                add_output_nodes.push((*id, IOType::Stderr));
+            }
+        }
+        for (id, iotype) in add_output_nodes.iter() {
+            let mut writenode = WriteNode::default();
+            match iotype {
+                IOType::Stdout => {
+                    writenode.add_stdout(DashStream::Stdout)?;
+                }
+                IOType::Stderr => {
+                    writenode.add_stderr(DashStream::Stderr)?;
+                }
+                _ => bail!("We shouldn't be adding a link to stdout"),
+            }
+            let new_id = program.add_elem(Elem::Write(writenode));
+            let new_pipe = PipeStream::new(*id, new_id, *iotype)?;
+            program
+                .get_mut_node(*id)
+                .unwrap()
+                .add_stdout(DashStream::Pipe(new_pipe.clone()))?;
+            program
+                .get_mut_node(new_id)
+                .unwrap()
+                .add_stdin(DashStream::Pipe(new_pipe.clone()))?;
+        }
+
+        Ok(program)
     }
 
     pub fn contains(&self, id: NodeId) -> bool {
@@ -264,9 +445,6 @@ impl ShellSplit {
                 }
                 ">" => {
                     elements.push(RawShellElement::Stdout);
-                }
-                "<" => {
-                    elements.push(RawShellElement::Stdin);
                 }
                 "2>" => {
                     elements.push(RawShellElement::Stderr);

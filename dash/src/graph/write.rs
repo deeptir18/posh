@@ -4,9 +4,10 @@ use failure::bail;
 use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::{copy, stderr, stdout};
+use std::slice::IterMut;
 use stream::{DashStream, HandleIdentifier, IOType, NetStream, SharedPipeMap, SharedStreamMap};
 /// Node that writes stdin to a specified file.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct WriteNode {
     /// Id within the program.
     node_id: NodeId,
@@ -20,7 +21,26 @@ pub struct WriteNode {
     location: Location,
 }
 
+impl WriteNode {
+    pub fn get_stdout_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.output.iter_mut()
+    }
+    pub fn get_output_locations(&self) -> Vec<Location> {
+        let mut ret: Vec<Location> = Vec::new();
+        for stream in self.output.iter() {
+            match stream {
+                DashStream::File(fs) => ret.push(fs.get_location()),
+                _ => {}
+            }
+        }
+        ret
+    }
+}
 impl Rapper for WriteNode {
+    fn set_loc(&mut self, loc: Location) {
+        self.location = loc;
+    }
+
     fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
         // Only look at stdin streams; output MUST be a file on the same machine.
         let streams: Vec<DashStream> = match iotype {
@@ -40,6 +60,18 @@ impl Rapper for WriteNode {
                 netstream_result.unwrap()
             })
             .collect()
+    }
+
+    fn get_stdin_len(&self) -> usize {
+        self.stdin.len()
+    }
+
+    fn get_stdout_len(&self) -> usize {
+        self.output.len()
+    }
+
+    fn get_stderr_len(&self) -> usize {
+        0
     }
     fn get_stdin(&self) -> Vec<DashStream> {
         self.stdin.clone()
@@ -61,6 +93,12 @@ impl Rapper for WriteNode {
         match stream {
             DashStream::File(fs) => {
                 self.output.push(DashStream::File(fs));
+            }
+            DashStream::Stdout => {
+                self.output.push(DashStream::Stdout);
+            }
+            DashStream::Stderr => {
+                self.output.push(DashStream::Stderr);
             }
             _ => bail!("Adding stdout to write node that is not a file stream."),
         }

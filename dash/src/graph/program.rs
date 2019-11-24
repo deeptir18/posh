@@ -3,6 +3,8 @@ use super::{cmd, read, stream, write, Location, Result};
 use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::collections::hash_map;
+use std::slice;
 use std::thread;
 use stream::{DashStream, IOType, NetStream, SharedPipeMap, SharedStreamMap};
 use thread::{spawn, JoinHandle};
@@ -19,6 +21,29 @@ pub enum Elem {
 }
 
 impl Rapper for Elem {
+    fn get_stdin_len(&self) -> usize {
+        match self {
+            Elem::Write(write_node) => write_node.get_stdin_len(),
+            Elem::Read(read_node) => read_node.get_stdin_len(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stdin_len(),
+        }
+    }
+
+    fn get_stdout_len(&self) -> usize {
+        match self {
+            Elem::Write(write_node) => write_node.get_stdout_len(),
+            Elem::Read(read_node) => read_node.get_stdout_len(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stdout_len(),
+        } 
+    }
+    fn get_stderr_len(&self) -> usize {
+        match self {
+            Elem::Write(write_node) => write_node.get_stderr_len(),
+            Elem::Read(read_node) => read_node.get_stderr_len(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stderr_len(),
+        } 
+    }
+
     fn get_stdin(&self) -> Vec<DashStream> {
         match self {
             Elem::Write(write_node) => write_node.get_stdin(),
@@ -95,6 +120,14 @@ impl Rapper for Elem {
         }
     }
 
+    fn set_loc(&mut self, loc: Location) {
+        match self {
+            Elem::Write(write_node) => write_node.set_loc(loc),
+            Elem::Read(read_node) => read_node.set_loc(loc),
+            Elem::Cmd(cmd_node) => cmd_node.set_loc(loc),
+        }
+    }
+
     fn run_redirection(
         &mut self,
         pipes: SharedPipeMap,
@@ -126,8 +159,40 @@ pub struct Node {
 }
 
 impl Node {
+    pub fn get_stdin_len(&self) -> usize {
+        self.elem.get_stdin_len()
+    }
+
+    pub fn get_stdout_len(&self) -> usize {
+        self.elem.get_stdout_len()
+    }
+
+    pub fn get_stderr_len(&self) -> usize {
+        self.elem.get_stderr_len()
+    }
+
     pub fn get_id(&self) -> NodeId {
         self.id
+    }
+
+    pub fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
+        self.elem.add_stdin(stream)
+    }
+
+    pub fn add_stdout(&mut self, stream: DashStream) -> Result<()> {
+        self.elem.add_stdout(stream)
+    }
+   
+    pub fn add_stderr(&mut self, stream: DashStream) -> Result<()> {
+        self.elem.add_stderr(stream)
+    }
+
+    pub fn get_elem(&self) -> Elem {
+        self.elem.clone()
+    }
+
+    pub fn get_mut_elem(&mut self) -> &mut Elem {
+        &mut self.elem
     }
 
     pub fn get_stdin(&self) -> Vec<DashStream> {
@@ -164,6 +229,10 @@ impl Node {
 
     pub fn get_loc(&self) -> Location {
         self.elem.get_loc()
+    }
+
+    pub fn set_loc(&mut self, loc: Location) {
+        self.elem.set_loc(loc)
     }
 
     pub fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
@@ -213,9 +282,116 @@ impl Default for Program {
     }
 }
 
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
+pub enum MergeDirection {
+    /// Merge other into the front of this graph
+    Input,
+    /// Merge other into the back of this graph
+    Output,
+}
+
 impl Program {
     pub fn get_id(&self) -> ProgId {
         self.id
+    }
+
+    pub fn get_mut_node(&mut self, id: NodeId) -> Option<&mut Node> {
+        self.nodes.get_mut(&id)
+    }
+
+    pub fn get_mut_nodes_iter(&mut self) -> hash_map::IterMut<u32, Node> {
+        self.nodes.iter_mut()
+    }
+    pub fn get_nodes_iter(&self) -> hash_map::Iter<u32, Node> {
+        self.nodes.iter()
+    }
+
+    pub fn get_edges_iter(&self) -> slice::Iter<Link> {
+        self.edges.iter()
+    }
+
+    pub fn contains(&self, id: NodeId) -> bool {
+        self.nodes.contains_key(&id)
+    }
+
+    /// Creates a new program from different subgraphs.
+    /// Merges them with the links provided by creating a new edge between a pair of points in
+    /// different subgraphs (id0, p0), (id1, pt1) where the first tuple member is the subgraph
+    /// Id, the second is the node within that subgraph.
+    pub fn merge_subgraphs(subgraphs: HashMap<NodeId, Program>, links: Vec<((NodeId, NodeId), (NodeId, NodeId))>) -> Result<Self> {
+        let mut program = Program::default();
+        let mut id_map: HashMap<(NodeId, NodeId), NodeId> = HashMap::default();
+
+        for (graph_id, subgraph) in subgraphs.into_iter() {
+            // add all the nodes and edges in this subgraph
+            for (old_id, node) in subgraph.get_nodes_iter() {
+                let new_id = program.add_elem(node.get_elem());
+                id_map.insert((graph_id, *old_id), new_id);
+            }
+
+            for link in subgraph.get_edges_iter() {
+                let left = id_map.get(&(graph_id, link.get_left())).unwrap();
+                let right = id_map.get(&(graph_id, link.get_right())).unwrap();
+                program.add_unique_edge(*left, *right);
+            }
+        }
+
+        // add in the new connections
+        for new_link in links.iter() {
+            let left = match id_map.get(&new_link.0) {
+                Some(id) => id,
+                None => bail!("Links provided contain id not inside id_map: {:?}", new_link.0),
+            };
+            let right = match id_map.get(&new_link.1) {
+                Some(id) => id,
+                None => bail!("Links provided contain id not inside id_map: {:?}", new_link.1),
+            };
+            program.add_unique_edge(*left, *right);
+        }
+        Ok(program)
+    }
+
+    // TODO: does correctness require us to also rename streams?
+    // Make sure to only call this when there are no streams.
+    // But how to enforce that?
+    pub fn merge(&mut self, other: Program, connections: Vec<(Link, MergeDirection)>) -> Result<()> {
+        // keep track of the new Ids for each node
+        let mut id_map: HashMap<NodeId, NodeId> = HashMap::default();
+        // add in all the nodes from the other program
+        for (old_id, node) in other.get_nodes_iter() {
+            let new_id = self.add_elem(node.get_elem());
+            id_map.insert(old_id.clone(), new_id);
+        }
+
+        // add in links from other program
+        for link in other.get_edges_iter() {
+            let left = id_map.get(&link.get_left()).unwrap();
+            let right = id_map.get(&link.get_right()).unwrap();
+            self.add_unique_edge(*left, *right);
+        }
+
+        // add in connection link
+        for (link, merge_direction) in connections.iter() {
+            match merge_direction {
+                MergeDirection::Input => {
+                    if !self.contains(link.get_right()) || !other.contains(link.get_left()) {
+                        bail!("Link ends are not within either graph (InputDirection) : {:?}", link);
+                    }
+                    let new_left = id_map.get(&link.get_left()).unwrap();
+                    self.add_unique_edge(*new_left, link.get_right());
+                }
+                MergeDirection::Output => {
+                    if !self.contains(link.get_left()) || !other.contains(link.get_right()) {
+                        bail!("Link ends are not within either graph (OutputDirection) : {:?}", link);
+                    }
+                    let new_right = id_map.get(&link.get_right()).unwrap();
+                    self.add_unique_edge(link.get_left(), *new_right);
+                }
+            }
+        }
+        
+        Ok(())
     }
 
     /// Splits the program into different sub-graphs that need to be executed on different
@@ -255,7 +431,7 @@ impl Program {
         self.nodes.iter().map(|(k, _)| k).cloned().collect()
     }
 
-    pub fn add_elem(&mut self, elem: Elem) {
+    pub fn add_elem(&mut self, elem: Elem) -> NodeId {
         let node: Node = Node {
             elem: elem,
             id: self.counter + 1,
@@ -263,6 +439,7 @@ impl Program {
         self.nodes.insert(self.counter + 1, node);
         self.counter += 1;
         self.sink_nodes.push(self.counter); // node with no dependencies is automatically a sink
+        self.counter
     }
 
     pub fn add_unique_node(&mut self, node: Node) {
@@ -343,7 +520,7 @@ impl Program {
     /// Finds an execution order for the nodes
     /// All dependencies for a sink need to be executed before a sink
     /// So maybe traverse from the sinks backwards (insert into a list)
-    fn execution_order(&self) -> Vec<NodeId> {
+    pub fn execution_order(&self) -> Vec<NodeId> {
         let mut path: Vec<NodeId> = Vec::new();
         for node_id in self.sink_nodes.iter() {
             // find the dependent nodes

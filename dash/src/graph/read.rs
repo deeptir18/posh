@@ -4,10 +4,11 @@ use failure::bail;
 use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::copy;
+use std::slice::IterMut;
 use stream::{DashStream, HandleIdentifier, IOType, NetStream, SharedPipeMap, SharedStreamMap};
 
 /// Node that reads from files and sends the output to the specified outputs.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct ReadNode {
     /// Id within the program.
     node_id: NodeId,
@@ -21,7 +22,28 @@ pub struct ReadNode {
     location: Location,
 }
 
+impl ReadNode {
+    pub fn get_stdin_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.input.iter_mut()
+    }
+
+    pub fn get_input_locations(&self) -> Vec<Location> {
+        let mut ret: Vec<Location> = Vec::new();
+        for stream in self.input.iter() {
+            match stream {
+                DashStream::File(fs) => ret.push(fs.get_location()),
+                _ => {}
+            }
+        }
+        ret
+    }
+}
+
 impl Rapper for ReadNode {
+    fn set_loc(&mut self, loc: Location) {
+        self.location = loc;
+    }
+
     fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
         // only could be in output streams; input streams must be filestreams
         let streams: Vec<DashStream> = match iotype {
@@ -40,6 +62,18 @@ impl Rapper for ReadNode {
                 netstream_result.unwrap()
             })
             .collect()
+    }
+
+    fn get_stdin_len(&self) -> usize {
+        self.input.len()
+    }
+
+    fn get_stdout_len(&self) -> usize {
+        self.stdout.len()
+    }
+
+    fn get_stderr_len(&self) -> usize {
+        0
     }
 
     fn get_stdin(&self) -> Vec<DashStream> {
@@ -112,7 +146,7 @@ impl Rapper for ReadNode {
                                     .write(true)
                                     .create(true)
                                     .open(filestream.get_name())?;
-                                copy(&mut input_handle, &mut file_handle)?;
+                                copy(&mut file_handle, &mut input_handle)?;
                             }
                             _ => {
                                 bail!(

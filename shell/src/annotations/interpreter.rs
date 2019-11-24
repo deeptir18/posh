@@ -9,10 +9,16 @@ use super::grammar::*;
 use super::parser::Parser;
 use super::shell_interpreter;
 use super::shell_parse;
+use cmd::{CommandNode, NodeArg};
 use dash::dag::{node, stream};
-use dash::graph::program;
-use program::Program;
-use std::collections::HashMap;
+use dash::graph;
+use dash::graph::{cmd, program, rapper, Location};
+use graph::stream::{DashStream, FileStream};
+use program::{Elem, NodeId, Program};
+use rapper::Rapper;
+use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
+
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
     pub filemap: FileMap,
@@ -42,16 +48,99 @@ impl Interpreter {
         })
     }
 
-    pub fn parse_cmd_graph(&self, command: &str) -> Result<Program> {
+    pub fn parse_cmd_graph(&mut self, command: &str) -> Result<Program> {
         // make a shell split from the command
         let shellsplit = shell_parse::ShellSplit::new(command)?;
+
         // turn shell split into shell graph
         let shellgraph = shellsplit.convert_into_shell_graph()?;
+
         // turn this into node graph that can be fed into the annotation layer to be executed
-        let program = shellgraph.convert_into_program()?;
+        let mut program = shellgraph.convert_into_program()?;
+
+        // apply the parser
+        self.apply_parser(&mut program)?;
+
+        // later: for all *cmd* nodes -- apply any graph substitutions to generate a parallel
+        // version of the same command
+
+        // for all FILESTREAMS -- try to apply the mount info to figure out if the file is remote
+        self.resolve_filestreams(&mut program)?;
+        // apply location algorithm
+        self.assign_program_location(&mut program)?;
         Ok(program)
     }
 
+    /// Resolves any filestreams in the nodes to take note of their possible local or remote
+    /// location.
+    /// Note that command nodes aren't allowed to have any stdin or stdout that are filestreams;
+    /// those are all replaced with a corresponding read and write node.
+    fn resolve_filestreams(&mut self, program: &mut Program) -> Result<()> {
+        for (_, node) in program.get_mut_nodes_iter() {
+            match node.get_mut_elem() {
+                Elem::Cmd(ref mut command_node) => {
+                    // iterate through op args
+                    for node_arg in command_node.get_args_iter_mut() {
+                        match node_arg {
+                            NodeArg::Str(_) => {}
+                            NodeArg::Stream(ref mut fs) => {
+                                self.filemap.modify_stream_to_remote(fs)?;
+                            }
+                        }
+                    }
+                }
+                Elem::Write(ref mut write_node) => {
+                    // iterate through output streams
+                    for dashstream in write_node.get_stdout_iter_mut() {
+                        match dashstream {
+                            DashStream::File(ref mut fs) => {
+                                self.filemap.modify_stream_to_remote(fs)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Elem::Read(ref mut read_node) => {
+                    // iterate through input streams
+                    for dashstream in read_node.get_stdin_iter_mut() {
+                        match dashstream {
+                            DashStream::File(ref mut fs) => {
+                                self.filemap.modify_stream_to_remote(fs)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_parser(&mut self, program: &mut Program) -> Result<()> {
+        // for each individual node, if it is a *cmd* node, apply the parser
+        // TODO: figure out if this actually applies the parser :)
+        for (_, node) in program.get_mut_nodes_iter() {
+            let elem = node.get_mut_elem();
+            if let Elem::Cmd(ref mut command_node) = elem {
+                if command_node.args_len() == 0 {
+                    continue;
+                }
+                // if a parser exists, try to parse the command into a parsed command
+                if self.parsers.contains_key(&command_node.get_name()) {
+                    let parser: &mut Parser =
+                        self.parsers.get_mut(&command_node.get_name()).unwrap();
+                    // use the parser to turn the String args into "types"
+                    let args = command_node.get_string_args();
+                    let typed_args = parser.parse_command(args)?;
+                    // interpret typed arguments and add them to the op
+                    self.interpret_cmd_types(typed_args, command_node)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // TODO: OLD FUNCTION
     pub fn parse_command(&mut self, command: &str) -> Result<node::Program> {
         // shell level parser
         let mut program: node::Program = Default::default();
@@ -88,6 +177,28 @@ impl Interpreter {
         Ok(program)
     }
 
+    fn interpret_cmd_types(&mut self, cmd: ParsedCommand, command: &mut CommandNode) -> Result<()> {
+        command.clear_args();
+        for arg in cmd.typed_args.iter() {
+            match arg.1 {
+                ArgType::Str => {
+                    command.add_arg(NodeArg::Str(arg.0.clone()));
+                }
+                ArgType::InputFile | ArgType::OutputFile => {
+                    command.add_arg(NodeArg::Stream(FileStream::new(
+                        &arg.0.clone(),
+                        Location::Client,
+                    )));
+                }
+                ArgType::InputFileList | ArgType::OutputFileList => {
+                    unimplemented!();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// TODO: OLD FUNCTION
     /// Turn the parsed command into a graph node
     fn interpret_types(&mut self, cmd: ParsedCommand, op: &mut node::Node) -> Result<()> {
         for arg in cmd.typed_args.iter() {
@@ -122,6 +233,97 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Assigns a location to each node in the program,
+    /// and modifies any pipes to be TCP streams when necessary.
+    /// Current algorithm:
+    /// read/write nodes must run on the machine where the input/output file stream is located.
+    /// command nodes must run where any FileStream arguments are located.
+    /// Otherwise, preserve locality: e.g. try to run where the last command ran.
+    /// TODO: maybe we can add semantics about input > output? (to help with the decision).
+    fn assign_program_location(&mut self, prog: &mut Program) -> Result<()> {
+        // iterate through nodes and assign any mandatory locations
+        let mandatory_location = |locs: Vec<Location>| -> Option<Location> {
+            let mut set: HashSet<Location> = HashSet::from_iter(locs);
+            match set.len() {
+                0 => None,
+                1 => {
+                    let mut ret_val: Option<Location> = None;
+                    for loc in set.drain() {
+                        ret_val = Some(loc)
+                    }
+                    ret_val
+                }
+                _ => Some(Location::Client),
+            }
+        };
+        let mut assigned: HashSet<NodeId> = HashSet::default();
+        for (id, node) in prog.get_mut_nodes_iter() {
+            match node.get_mut_elem() {
+                Elem::Read(ref mut readnode) => {
+                    let locations = readnode.get_input_locations();
+                    match mandatory_location(locations) {
+                        Some(loc) => {
+                            readnode.set_loc(loc);
+                            assigned.insert(*id);
+                        }
+                        None => {}
+                    }
+                }
+                Elem::Write(ref mut writenode) => {
+                    let locations = writenode.get_output_locations();
+                    match mandatory_location(locations) {
+                        Some(loc) => {
+                            writenode.set_loc(loc);
+                            assigned.insert(*id);
+                        }
+                        None => {}
+                    }
+                }
+                Elem::Cmd(ref mut cmdnode) => {
+                    let locations = cmdnode.arg_locations();
+                    match mandatory_location(locations) {
+                        Some(loc) => {
+                            cmdnode.set_loc(loc);
+                            assigned.insert(*id);
+                        }
+                        None => {}
+                    }
+                }
+            }
+        }
+
+        // TODO: program in a DP to calculate the optimal location for each node
+        // right now -- just fill in the nodes where *most* of the nodes are evaluating
+        let mut location_count: HashMap<Location, u32> = HashMap::default();
+        for (id, node) in prog.get_nodes_iter() {
+            if assigned.contains(id) {
+                if location_count.contains_key(&node.get_loc()) {
+                    let mut_count = location_count.get_mut(&node.get_loc()).unwrap();
+                    *mut_count += 1;
+                } else {
+                    location_count.insert(node.get_loc(), 1);
+                }
+            }
+        }
+        let mut max_counted_location = Location::default();
+        let mut max_count: u32 = 0;
+        for (loc, count) in location_count.iter() {
+            if max_count == 0 || *count > max_count {
+                max_count = *count;
+                max_counted_location = loc.clone();
+            }
+        }
+
+        for (id, node) in prog.get_mut_nodes_iter() {
+            if !assigned.contains(id) {
+                node.set_loc(max_counted_location.clone());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// TODO: OLD FUNCTION
     // With all the information about the command and the files they open, decide on an execution
     // location for each operation
     fn assign_location(&mut self, prog: &mut node::Program) {

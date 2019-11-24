@@ -4,13 +4,30 @@ use super::serialize::{read_msg_and_type, rpc, write_msg_and_type};
 use super::Result;
 use bincode::{deserialize, serialize};
 use failure::bail;
+use nom::types::CompleteByteSlice;
+use nom::*;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{prelude::*, BufReader};
 use std::net::TcpStream;
+use std::str;
 use std::thread;
 use stream::{NetStream, SharedStreamMap};
 use thread::JoinHandle;
 
 pub type MountMap = HashMap<Addr, String>;
+named_complete!(
+    parse_file_info<(&str, &str)>,
+    do_parse!(
+        folder: map!(take_until!(":"), |n: CompleteByteSlice| {
+            str::from_utf8(n.0).unwrap()
+        }) >> tag!(":")
+            >> ip: map!(rest, |n: CompleteByteSlice| {
+                str::from_utf8(n.0).unwrap()
+            })
+            >> (folder, ip)
+    )
+);
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct ShellClient {
@@ -21,7 +38,28 @@ pub struct ShellClient {
 }
 
 impl ShellClient {
-    pub fn new(server_port: &str) -> Self {
+    pub fn new(server_port: &str, mount_info: &str) -> Result<Self> {
+        let mut ret: HashMap<Addr, String> = HashMap::default();
+        let file = File::open(mount_info)?;
+        let reader = BufReader::new(file);
+
+        for line in reader.lines() {
+            let line_src = line?;
+            let (file, ip) = match parse_file_info(CompleteByteSlice(line_src.as_ref())) {
+                Ok(b) => b.1,
+                Err(e) => {
+                    bail!("line {:?} failed with {:?}", line_src, e.to_string());
+                }
+            };
+            ret.insert(Addr::new(ip, server_port), file.to_string());
+        }
+        Ok(ShellClient {
+            mount_map: ret,
+            port: server_port.to_string(),
+        })
+    }
+
+    pub fn new_empty(server_port: &str) -> Self {
         let mount_map: HashMap<Addr, String> = HashMap::default();
         ShellClient {
             mount_map: mount_map,

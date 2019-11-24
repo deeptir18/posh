@@ -4,6 +4,7 @@ use failure::bail;
 use program::{NodeId, ProgId};
 use std::io::copy;
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
+use std::slice::IterMut;
 use std::thread;
 use stream::{
     DashStream, FileStream, HandleIdentifier, IOType, NetStream, OutputHandle, SharedPipeMap,
@@ -73,6 +74,78 @@ impl CommandNode {
         }
     }
 
+    /// Vector of locations for any file inputs.
+    /// Used to decide location of where to execute a node.
+    pub fn arg_locations(&self) -> Vec<Location> {
+        let mut ret: Vec<Location> = Vec::new();
+        for arg in self.args.iter() {
+            match arg {
+                NodeArg::Str(_) => {}
+                NodeArg::Stream(fs) => ret.push(fs.get_location()),
+            }
+        }
+        ret
+    }
+
+    pub fn args_len(&self) -> usize {
+        self.args.len()
+    }
+
+    pub fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn get_args_iter_mut(&mut self) -> IterMut<NodeArg> {
+        self.args.iter_mut()
+    }
+
+    pub fn get_string_args(&self) -> Vec<String> {
+        let mut ret: Vec<String> = Vec::new();
+        for arg in self.args.iter() {
+            match arg {
+                NodeArg::Str(argument) => ret.push(argument.clone()),
+                _ => {}
+            }
+        }
+        ret
+    }
+
+    pub fn clear_args(&mut self) {
+        self.args.clear();
+    }
+
+    pub fn name_set(&self) -> bool {
+        match self.name.as_ref() {
+            "" => false,
+            _ => true,
+        }
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
+
+    pub fn initialize(&mut self) -> Result<()> {
+        if !self.name_set() {
+            bail!("Cmd could not be initialized; no name");
+        }
+
+        match which(self.name.clone()) {
+            Ok(cmd_path) => match cmd_path.to_str() {
+                Some(c) => {
+                    self.name = c.to_string();
+                }
+                None => bail!("Could not turn binary to str"),
+            },
+            Err(e) => bail!("Could not find binary {} -> {:?}", self.name, e),
+        }
+        Ok(())
+    }
+
+    pub fn add_arg(&mut self, arg: NodeArg) {
+        self.args.push(arg);
+    }
+
     /// Returns the stream identifier for the stdout, stdin, and stderr handles for *this node*
     fn get_handle_identifier(&self, iotype: IOType) -> HandleIdentifier {
         HandleIdentifier::new(self.prog_id, self.node_id, iotype)
@@ -98,6 +171,10 @@ impl CommandNode {
 }
 
 impl Rapper for CommandNode {
+    fn set_loc(&mut self, loc: Location) {
+        self.location = loc;
+    }
+
     fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
         let streams: Vec<DashStream> = match iotype {
             IOType::Stdin => self
@@ -126,6 +203,18 @@ impl Rapper for CommandNode {
                 netstream_result.unwrap()
             })
             .collect()
+    }
+
+    fn get_stdin_len(&self) -> usize {
+        self.stdin.len()
+    }
+
+    fn get_stdout_len(&self) -> usize {
+        self.stdout.len()
+    }
+
+    fn get_stderr_len(&self) -> usize {
+        self.stderr.len()
     }
     fn get_stdin(&self) -> Vec<DashStream> {
         self.stdin.clone()

@@ -63,6 +63,12 @@ pub trait Rapper {
 
     fn get_stderr(&self) -> Vec<DashStream>;
 
+    fn get_stdin_len(&self) -> usize;
+
+    fn get_stdout_len(&self) -> usize;
+
+    fn get_stderr_len(&self) -> usize;
+
     fn add_stdin(&mut self, stream: DashStream) -> Result<()>;
 
     fn add_stdout(&mut self, stream: DashStream) -> Result<()>;
@@ -81,6 +87,8 @@ pub trait Rapper {
     ) -> Result<()>;
 
     fn get_loc(&self) -> Location;
+
+    fn set_loc(&mut self, loc: Location);
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()>;
 }

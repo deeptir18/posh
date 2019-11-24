@@ -1,4 +1,5 @@
 extern crate dash;
+use dash::graph::{stream, Location};
 use dash::util::Result;
 use failure::bail;
 use nom::types::CompleteByteSlice;
@@ -8,6 +9,7 @@ use std::fs::File;
 use std::io::{prelude::*, BufReader};
 use std::path::Path;
 use std::*;
+use stream::FileStream;
 /// Map of mount to IP addresses
 pub struct FileMap {
     map: HashMap<String, String>,
@@ -65,6 +67,21 @@ impl FileMap {
             }
         }
         None
+    }
+
+    /// Modifies the filestream to be remote if necessary.
+    pub fn modify_stream_to_remote(&self, filestream: &mut FileStream) -> Result<()> {
+        match filestream.get_location() {
+            Location::Client => match self.find_match(&filestream.get_name()) {
+                Some((mount, ip)) => {
+                    filestream.set_location(Location::Server(ip));
+                    filestream.strip_prefix(&mount)?;
+                    Ok(())
+                }
+                None => Ok(()),
+            },
+            Location::Server(_) => Ok(()),
+        }
     }
 }
 

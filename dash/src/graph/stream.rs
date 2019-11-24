@@ -172,6 +172,17 @@ impl FileStream {
         })
     }
 
+    pub fn strip_prefix(&mut self, prefix: &str) -> Result<()> {
+        let mut path = Path::new(&self.name);
+        path = path.strip_prefix(prefix)?;
+        let loc = match path.to_str() {
+            Some(p) => p,
+            None => bail!("Failed to strip prefix {} from {}", prefix, self.name),
+        };
+        self.name = loc.to_string();
+        Ok(())
+    }
+
     /// Returns the filename with the specified directory prepended.
     pub fn prepend_directory(&mut self, directory: &str) -> Result<()> {
         match Path::new(directory)
@@ -187,6 +198,14 @@ impl FileStream {
 
     pub fn get_name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn get_location(&self) -> Location {
+        self.location.clone()
+    }
+
+    pub fn set_location(&mut self, loc: Location) {
+        self.location = loc;
     }
 }
 
