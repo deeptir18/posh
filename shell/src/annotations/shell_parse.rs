@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use shellwords::split;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use stream::{DashStream, FileStream, IOType, PipeStream};
+use stream::{DashStream, FileMode, FileStream, IOType, PipeStream};
 use write::WriteNode;
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
@@ -93,6 +93,24 @@ impl ShellGraphNode {
                                     filename,
                                     Location::Client,
                                 )))?;
+                                stdout_nodes.push(writenode);
+                            }
+                            _ => {
+                                bail!("Stdout in this stage can only be followed by strings");
+                            }
+                        }
+                    } else {
+                        bail!("Stdout directive without anything following!");
+                    }
+                }
+                RawShellElement::StdoutAppend => {
+                    if let Some(next_elt) = iter.next() {
+                        match next_elt {
+                            RawShellElement::Str(filename) => {
+                                let mut writenode = WriteNode::default();
+                                let mut fs = FileStream::new(filename, Location::Client);
+                                fs.set_mode(FileMode::APPEND);
+                                writenode.add_stdout(DashStream::File(fs))?;
                                 stdout_nodes.push(writenode);
                             }
                             _ => {
@@ -263,22 +281,30 @@ impl ShellGraph {
         // generate subgraphs for each part
         let mut subgraph_map: HashMap<NodeId, Program> = HashMap::default();
         let mut links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
+        let mut old_links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
         for (id, graph_node) in self.nodes.iter() {
             let subgraph = graph_node.generate_subprogram()?;
             subgraph_map.insert(*id, subgraph);
         }
+        for (id, subgraph) in subgraph_map.iter() {
+            for edge in subgraph.get_edges_iter() {
+                old_links.push(((*id, edge.get_left()), (*id, edge.get_right())));
+            }
+        }
         for edge in self.edges.iter() {
             // connect node 0 of each new subgraph
-            links.push(((edge.left, 0), (edge.right, 0)));
+            links.push(((edge.left, 1), (edge.right, 1)));
         }
-
         // merge all subgraphs into 1 program
-        let mut program = Program::merge_subgraphs(subgraph_map, links)?;
-
+        let mut program = Program::merge_subgraphs(subgraph_map, old_links, links)?;
         // now, go through and add in stdout and stderr redirections for any nodes that do not
         // have any redirection currently
         let mut add_output_nodes: Vec<(NodeId, IOType)> = Vec::new();
         for (id, node) in program.get_nodes_iter() {
+            match node.get_elem() {
+                Elem::Cmd(_) => {}
+                _ => continue,
+            }
             if node.get_stdout_len() == 0 {
                 add_output_nodes.push((*id, IOType::Stdout));
             }
@@ -286,6 +312,7 @@ impl ShellGraph {
                 add_output_nodes.push((*id, IOType::Stderr));
             }
         }
+        println!("add output nodes: {:?}", add_output_nodes);
         for (id, iotype) in add_output_nodes.iter() {
             let mut writenode = WriteNode::default();
             match iotype {
@@ -380,6 +407,7 @@ pub enum RawShellElement {
     Stdout,
     Stderr,
     Pipe,
+    StdoutAppend,
     Subcmd(SubCommand),
 }
 
@@ -420,6 +448,9 @@ impl ShellSplit {
                             ">" => {
                                 subcommand.push(RawShellElement::Stdout);
                             }
+                            ">>" => {
+                                subcommand.push(RawShellElement::StdoutAppend);
+                            }
                             "<" => {
                                 subcommand.push(RawShellElement::Stdin);
                             }
@@ -446,6 +477,9 @@ impl ShellSplit {
                 ">" => {
                     elements.push(RawShellElement::Stdout);
                 }
+                ">>" => {
+                    elements.push(RawShellElement::StdoutAppend);
+                }
                 "2>" => {
                     elements.push(RawShellElement::Stderr);
                 }
@@ -467,22 +501,22 @@ impl ShellSplit {
         let mut parts = self.elts.split(|elt| elt.clone() == RawShellElement::Pipe);
         // merge all parts into the top level graph.
         while let Some(subcmd) = parts.next() {
-            println!("next part: {:?}", subcmd);
+            //println!("next part: {:?}", subcmd);
             let new_subgraph = get_subgraph(subcmd)?;
-            println!("new subgraph: {:?}", new_subgraph);
+            //println!("new subgraph: {:?}", new_subgraph);
             if graph.nodes.len() == 0 {
-                println!(
+                /*println!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
-                );
+                );*/
                 graph.merge(new_subgraph, None)?;
-                println!("new graph nodes: {:?}", graph.nodes.keys());
+            //println!("new graph nodes: {:?}", graph.nodes.keys());
             } else {
                 // TODO: this accessing of the first value of front and sink doesn't really scale
                 let graph_end = graph.get_end()[0];
                 let subgraph_front = new_subgraph.get_front()[0];
-                println!(
+                /*println!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
@@ -493,7 +527,7 @@ impl ShellSplit {
                         left: graph_end,
                         right: subgraph_front
                     }
-                );
+                );*/
                 graph.merge(
                     new_subgraph,
                     Some((
@@ -504,7 +538,7 @@ impl ShellSplit {
                         false,
                     )),
                 )?;
-                println!("new graph nodes: {:?}", graph.nodes.keys());
+                //println!("new graph nodes: {:?}", graph.nodes.keys());
             }
         }
         Ok(graph)
@@ -560,6 +594,10 @@ fn get_subgraph(subcmd: &[RawShellElement]) -> Result<ShellGraph> {
                 let current_node = graph.get_node(id).unwrap();
                 current_node.push(RawShellElement::Stderr);
             }
+            RawShellElement::StdoutAppend => {
+                let current_node = graph.get_node(id).unwrap();
+                current_node.push(RawShellElement::Stdout);
+            }
             RawShellElement::Stdout => {
                 let current_node = graph.get_node(id).unwrap();
                 current_node.push(RawShellElement::Stdout);
@@ -579,8 +617,53 @@ fn get_subgraph(subcmd: &[RawShellElement]) -> Result<ShellGraph> {
 }
 
 #[cfg(test)]
+// TODO: FIGURE OUT HOW TO TEST THIS FOR REAL
 mod test {
     use super::*;
+    //use std::collections::hash_map::Iter as HashIter;
+    //use std::slice::Iter as SliceIter;
+    //
+
+    #[test]
+    fn test_mogrify() {
+        let cmd = "mogrify  -format gif -path thumbs_dir -thumbnail 100x100 data_dir/*.jpg";
+        let shell_split = ShellSplit::new(cmd).unwrap();
+        let shell_prog = shell_split.convert_into_shell_graph().unwrap();
+        let program = shell_prog.convert_into_program().unwrap();
+        println!("program: {:?}", program);
+    }
+
+    #[test]
+    fn test_shell_split_to_graph() {
+        let cmd = "grep foo <( cat bar ) <( cat bar2 ) | wc > output.txt 2> err.txt";
+        match ShellSplit::new(cmd) {
+            Ok(shell_split) => match shell_split.convert_into_shell_graph() {
+                Ok(shell_prog) => {
+                    println!("shell prog: {:?}", shell_prog);
+                    println!("________");
+                    match shell_prog.convert_into_program() {
+                        Ok(p) => {
+                            println!("Program!");
+                            println!("{:?}", p);
+                            //assert!(false);
+                        }
+                        Err(e) => {
+                            println!("Failed to convert shell split into program: {:?}", e);
+                            assert!(false);
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("Failed to convert split into program: {:?}", e);
+                    assert!(false);
+                }
+            },
+            Err(e) => {
+                println!("Failed to divide into shell split: {:?}", e);
+                assert!(false);
+            }
+        }
+    }
 
     #[test]
     fn test_scan_command() {

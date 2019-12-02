@@ -2,7 +2,7 @@ use super::program::NodeId;
 use super::stream;
 use super::Location;
 use super::Result;
-use stream::{DashStream, IOType, NetStream, SharedPipeMap, SharedStreamMap};
+use stream::{DashStream, IOType, NetStream, SharedPipeMap, SharedStreamMap, PipeStream};
 
 /// Checks if this is a stream that represents a TCP connection that should be initiated by this
 /// nodeid.
@@ -91,4 +91,6 @@ pub trait Rapper {
     fn set_loc(&mut self, loc: Location);
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()>;
+
+    fn replace_pipe_with_net(&mut self, pipe: PipeStream, net: NetStream, iotype: IOType) -> Result<()>;
 }

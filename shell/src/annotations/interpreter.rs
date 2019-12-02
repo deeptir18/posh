@@ -240,6 +240,7 @@ impl Interpreter {
     /// command nodes must run where any FileStream arguments are located.
     /// Otherwise, preserve locality: e.g. try to run where the last command ran.
     /// TODO: maybe we can add semantics about input > output? (to help with the decision).
+    /// SOMEWHERE, NEED TO MODIFY THE NECESSARY PIPES TO BE TCP STREAMS!
     fn assign_program_location(&mut self, prog: &mut Program) -> Result<()> {
         // iterate through nodes and assign any mandatory locations
         let mandatory_location = |locs: Vec<Location>| -> Option<Location> {
@@ -320,6 +321,8 @@ impl Interpreter {
             }
         }
 
+        prog.make_pipes_networked()?;
+
         Ok(())
     }
 
@@ -353,6 +356,7 @@ impl Interpreter {
 #[cfg(test)]
 mod test {
     use super::*;
+
     fn get_test_filemap() -> FileMap {
         let mut map: HashMap<String, String> = HashMap::default();
         map.insert("/d/c/".to_string(), "127.0.0.1".to_string());
@@ -363,28 +367,45 @@ mod test {
     fn get_cat_parser() -> Parser {
         let mut parser = Parser::new("cat");
         let annotation = "cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]";
-        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+            .add_annotation(Command::new(annotation).unwrap())
+            .unwrap();
         parser
     }
 
     fn get_grep_parser() -> Parser {
         let mut parser = Parser::new("grep");
         let annotation = "grep: OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
-        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+            .add_annotation(Command::new(annotation).unwrap())
+            .unwrap();
         parser
     }
 
     fn get_sort_parser() -> Parser {
         let mut parser = Parser::new("sort");
         let annotation = "sort: FLAGS:[(short:r,long:reverse)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
-        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+            .add_annotation(Command::new(annotation).unwrap())
+            .unwrap();
         parser
     }
 
     fn get_wc_parser() -> Parser {
         let mut parser = Parser::new("wc");
         let annotation = "wc: FLAGS:[(short:l,long:lines)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
-        parser.add_annotation(Command::new(annotation).unwrap());
+        parser
+            .add_annotation(Command::new(annotation).unwrap())
+            .unwrap();
+        parser
+    }
+
+    fn get_mogrify_parser() -> Parser {
+        let mut parser = Parser::new("mogrify");
+        let annotation = "mogrify: OPTPARAMS:[(long:format,type:str,size:1),(long:path,type:input_file,size:1),(long:thumbnail,type:str,size:1)] PARAMS:[(type:output_file,size:list(list_separator:( )))]";
+        parser
+            .add_annotation(Command::new(annotation).unwrap())
+            .unwrap();
         parser
     }
 
@@ -394,6 +415,7 @@ mod test {
         parsers.insert("grep".to_string(), get_grep_parser());
         parsers.insert("sort".to_string(), get_sort_parser());
         parsers.insert("wc".to_string(), get_wc_parser());
+        parsers.insert("mogrify".to_string(), get_mogrify_parser());
         parsers
     }
 
@@ -405,9 +427,18 @@ mod test {
     }
 
     #[test]
+    fn test_thumbnail_cmd() {
+        let mut interpreter = get_test_interpreter();
+        let program = interpreter.parse_cmd_graph(
+            "mogrify  --format=gif --path=thumbs_dir --thumbnail=100x100 data_dir/1.jpg data_dir/2.jpg"
+        ).unwrap();
+        println!("expected program: {:?}", program);
+    }
+
+    #[test]
     fn test_parse_command_remote() {
         let mut interpreter = get_test_interpreter();
-        let mut program = interpreter.parse_command(
+        let program = interpreter.parse_command(
             "cat /d/c/b/foo.txt /d/c/bar.txt | grep -e 'a|b|c|d' | sort -r | wc > /d/c/blah.txt",
         ).unwrap();
         let mut expected_program = node::Program::default();
@@ -466,7 +497,7 @@ mod test {
     #[test]
     fn test_parse_command_local() {
         let mut interpreter = get_test_interpreter();
-        let mut program = interpreter
+        let program = interpreter
             .parse_command(
                 "cat /d/c/b/foo.txt bar.txt | grep -e 'a|b|c|d' | sort -r | wc > /d/c/blah.txt",
             )

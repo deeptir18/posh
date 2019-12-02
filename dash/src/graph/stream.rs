@@ -39,6 +39,13 @@ impl PipeStream {
         self.right
     }
 
+    pub fn set_left(&mut self, id: NodeId) {
+        self.left = id;
+    }
+
+    pub fn set_right(&mut self, id: NodeId) {
+        self.right = id;
+    }
     pub fn get_output_type(&self) -> IOType {
         self.output_type
     }
@@ -144,11 +151,31 @@ impl NetStream {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
+pub enum FileMode {
+    /// Create the file and write to it.
+    CREATE,
+    /// Just read permissions.
+    READ,
+    /// Append to an existing file.
+    APPEND,
+    /// Regular (unclear what to do so just putting a placeholder here).
+    REGULAR,
+}
+
+impl Default for FileMode {
+    fn default() -> Self {
+        FileMode::REGULAR
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Default)]
 pub struct FileStream {
     /// Where does the file live?
     location: Location,
     /// Name of the file
     name: String,
+    /// file mode
+    mode: FileMode,
 }
 
 impl FileStream {
@@ -156,7 +183,12 @@ impl FileStream {
         FileStream {
             location: location,
             name: name.to_string(),
+            mode: Default::default(),
         }
+    }
+
+    pub fn set_mode(&mut self, mode: FileMode) {
+        self.mode = mode;
     }
 
     pub fn new_from_prefix(location: Location, full_path: &str, mount: &str) -> Result<Self> {
@@ -169,6 +201,7 @@ impl FileStream {
         Ok(FileStream {
             location: location,
             name: loc.to_string(),
+            mode: Default::default(),
         })
     }
 

@@ -7,8 +7,8 @@ use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::slice::IterMut;
 use std::thread;
 use stream::{
-    DashStream, FileStream, HandleIdentifier, IOType, NetStream, OutputHandle, SharedPipeMap,
-    SharedStreamMap,
+    DashStream, FileStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream,
+    SharedPipeMap, SharedStreamMap,
 };
 use thread::{spawn, JoinHandle};
 use which::which;
@@ -60,6 +60,18 @@ impl Default for CommandNode {
 }
 
 impl CommandNode {
+    pub fn get_stdin_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.stdin.iter_mut()
+    }
+
+    pub fn get_stdout_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.stdout.iter_mut()
+    }
+
+    pub fn get_stderr_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.stderr.iter_mut()
+    }
+
     pub fn new(cmd: &str, location: Location) -> Result<Self> {
         match which(cmd) {
             Ok(cmd_path) => match cmd_path.to_str() {
@@ -171,6 +183,41 @@ impl CommandNode {
 }
 
 impl Rapper for CommandNode {
+    fn replace_pipe_with_net(
+        &mut self,
+        pipe: PipeStream,
+        net: NetStream,
+        iotype: IOType,
+    ) -> Result<()> {
+        match iotype {
+            IOType::Stdin => {
+                let prev_len = self.stdin.len();
+                self.stdin
+                    .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
+                let new_len = self.stdin.len();
+                assert!(new_len == prev_len - 1);
+                self.add_stdin(DashStream::Tcp(net))?;
+            }
+            IOType::Stdout => {
+                let prev_len = self.stdout.len();
+                self.stdout
+                    .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
+                let new_len = self.stdout.len();
+                assert!(new_len == prev_len - 1);
+                self.add_stdout(DashStream::Tcp(net))?;
+            }
+            IOType::Stderr => {
+                let prev_len = self.stderr.len();
+                self.stderr
+                    .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
+                let new_len = self.stderr.len();
+                assert!(new_len == prev_len - 1);
+                self.add_stderr(DashStream::Tcp(net))?;
+            }
+        }
+        Ok(())
+    }
+
     fn set_loc(&mut self, loc: Location) {
         self.location = loc;
     }

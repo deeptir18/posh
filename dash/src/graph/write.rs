@@ -5,7 +5,9 @@ use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::{copy, stderr, stdout};
 use std::slice::IterMut;
-use stream::{DashStream, HandleIdentifier, IOType, NetStream, SharedPipeMap, SharedStreamMap};
+use stream::{
+    DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
+};
 /// Node that writes stdin to a specified file.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct WriteNode {
@@ -25,6 +27,9 @@ impl WriteNode {
     pub fn get_stdout_iter_mut(&mut self) -> IterMut<DashStream> {
         self.output.iter_mut()
     }
+    pub fn get_stdin_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.stdin.iter_mut()
+    }
     pub fn get_output_locations(&self) -> Vec<Location> {
         let mut ret: Vec<Location> = Vec::new();
         for stream in self.output.iter() {
@@ -37,6 +42,31 @@ impl WriteNode {
     }
 }
 impl Rapper for WriteNode {
+    fn replace_pipe_with_net(
+        &mut self,
+        pipe: PipeStream,
+        net: NetStream,
+        iotype: IOType,
+    ) -> Result<()> {
+        match iotype {
+            IOType::Stdin => {
+                let prev_len = self.stdin.len();
+                self.stdin
+                    .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
+                let new_len = self.stdin.len();
+                assert!(new_len == prev_len - 1);
+                self.add_stdin(DashStream::Tcp(net))?;
+            }
+            IOType::Stdout => {
+                bail!("No pipe stdout for write");
+            }
+            IOType::Stderr => {
+                bail!("No pipe stdout for write");
+            }
+        }
+        Ok(())
+    }
+
     fn set_loc(&mut self, loc: Location) {
         self.location = loc;
     }
@@ -100,13 +130,18 @@ impl Rapper for WriteNode {
             DashStream::Stderr => {
                 self.output.push(DashStream::Stderr);
             }
-            _ => bail!("Adding stdout to write node that is not a file stream."),
+            _ => bail!(
+                "Adding stdout to write node that is not a file stream: {:?},",
+                stream
+            ),
         }
         Ok(())
     }
 
-    fn add_stderr(&mut self, _stream: DashStream) -> Result<()> {
-        bail!("No stderr for write node");
+    fn add_stderr(&mut self, stream: DashStream) -> Result<()> {
+        // TODO: is this okay?
+        self.output.push(stream);
+        Ok(())
     }
 
     fn run_redirection(

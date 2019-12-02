@@ -5,7 +5,9 @@ use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::copy;
 use std::slice::IterMut;
-use stream::{DashStream, HandleIdentifier, IOType, NetStream, SharedPipeMap, SharedStreamMap};
+use stream::{
+    DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
+};
 
 /// Node that reads from files and sends the output to the specified outputs.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
@@ -25,6 +27,9 @@ pub struct ReadNode {
 impl ReadNode {
     pub fn get_stdin_iter_mut(&mut self) -> IterMut<DashStream> {
         self.input.iter_mut()
+    }
+    pub fn get_stdout_iter_mut(&mut self) -> IterMut<DashStream> {
+        self.stdout.iter_mut()
     }
 
     pub fn get_input_locations(&self) -> Vec<Location> {
@@ -180,6 +185,30 @@ impl Rapper for ReadNode {
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
         resolve_file_streams(&mut self.input, parent_dir)?;
         resolve_file_streams(&mut self.stdout, parent_dir)?;
+        Ok(())
+    }
+    fn replace_pipe_with_net(
+        &mut self,
+        pipe: PipeStream,
+        net: NetStream,
+        iotype: IOType,
+    ) -> Result<()> {
+        match iotype {
+            IOType::Stdin => {
+                bail!("Stdin for read node should not be pipe!");
+            }
+            IOType::Stdout => {
+                let prev_len = self.stdout.len();
+                self.stdout
+                    .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
+                let new_len = self.stdout.len();
+                assert!(new_len == prev_len - 1);
+                self.add_stdout(DashStream::Tcp(net))?;
+            }
+            IOType::Stderr => {
+                bail!("No stderr out of read node");
+            }
+        }
         Ok(())
     }
 }
