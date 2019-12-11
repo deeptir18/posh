@@ -1,6 +1,7 @@
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
+use itertools::join;
 use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::copy;
@@ -45,6 +46,31 @@ impl ReadNode {
 }
 
 impl Rapper for ReadNode {
+    fn set_id(&mut self, id: NodeId) {
+        self.node_id = id;
+    }
+
+    fn get_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    fn get_dot_label(&self) -> Result<String> {
+        let inputs: Result<Vec<String>> = self
+            .input
+            .iter()
+            .map(|stream| stream.get_dot_label())
+            .collect();
+        match inputs {
+            Ok(o) => Ok(format!(
+                "{}: {}\nloc: {:?}",
+                self.node_id,
+                join(o, "\n\n"),
+                self.location
+            )),
+            Err(e) => bail!("{:?}", e),
+        }
+    }
+
     fn set_loc(&mut self, loc: Location) {
         self.location = loc;
     }
@@ -90,7 +116,7 @@ impl Rapper for ReadNode {
     }
 
     fn get_stderr(&self) -> Vec<DashStream> {
-        unimplemented!();
+        vec![]
     }
 
     fn add_stdin(&mut self, stream: DashStream) -> Result<()> {

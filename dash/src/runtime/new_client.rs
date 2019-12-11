@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{prelude::*, BufReader};
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::str;
 use std::thread;
 use stream::{NetStream, SharedStreamMap};
@@ -35,10 +36,12 @@ pub struct ShellClient {
     mount_map: MountMap,
     /// Server port
     port: String,
+    /// Current directory; used to resolve file paths locally in case any commands change.
+    pwd: PathBuf,
 }
 
 impl ShellClient {
-    pub fn new(server_port: &str, mount_info: &str) -> Result<Self> {
+    pub fn new(server_port: &str, mount_info: &str, pwd: PathBuf) -> Result<Self> {
         let mut ret: HashMap<Addr, String> = HashMap::default();
         let file = File::open(mount_info)?;
         let reader = BufReader::new(file);
@@ -56,15 +59,12 @@ impl ShellClient {
         Ok(ShellClient {
             mount_map: ret,
             port: server_port.to_string(),
+            pwd: pwd,
         })
     }
 
-    pub fn new_empty(server_port: &str) -> Self {
-        let mount_map: HashMap<Addr, String> = HashMap::default();
-        ShellClient {
-            mount_map: mount_map,
-            port: server_port.to_string(),
-        }
+    pub fn set_pwd(&mut self, pwd: PathBuf) {
+        self.pwd = pwd;
     }
 
     /// Runs the setup portion of the command.
@@ -155,12 +155,20 @@ impl ShellClient {
                 bail!("Could not split given program: {:?}", e);
             }
         };
+        println!("printing program map");
+
+        for (loc, prog) in program_map.iter() {
+            println!("loc: {:?}", loc);
+            println!("program: {:?}", prog);
+        }
+
+        println!("done printing program map");
 
         // client needs a shared stream map for handling copying standard in to nodes,
         // for the portions of the graph *it needs to execute*
         let mut shared_map = SharedStreamMap::new();
         self.run_setup(&mut program_map, &mut shared_map)?;
-
+        println!("finished running setup");
         // now try to execute each portion of the program:
         self.send_program(&mut program_map, &mut shared_map)?;
         Ok(())
@@ -257,6 +265,8 @@ fn execute_subprogram(
     match loc {
         Location::Client => {
             // execute the subprogram
+            println!("executing following subprogram locally: {:?}", prog);
+            prog.resolve_args("")?; // noop for client
             prog.execute(shared_stream_map)
         }
         Location::Server(ip) => {
@@ -266,7 +276,7 @@ fn execute_subprogram(
             let message = serialize(&prog)?;
             write_msg_and_type(
                 message.to_vec(),
-                rpc::MessageType::SetupStreams,
+                rpc::MessageType::ProgramExecution,
                 &mut stream,
             )?;
             let (_, next_msg) = read_msg_and_type(&mut stream)?;

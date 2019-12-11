@@ -2,12 +2,16 @@ extern crate dash;
 use dash::graph::{stream, Location};
 use dash::util::Result;
 use failure::bail;
+use glob::glob;
 use nom::types::CompleteByteSlice;
 use nom::*;
 use std::collections::HashMap;
+use std::env;
+use std::fs::canonicalize;
 use std::fs::File;
 use std::io::{prelude::*, BufReader};
 use std::path::Path;
+use std::path::PathBuf;
 use std::*;
 use stream::FileStream;
 /// Map of mount to IP addresses
@@ -27,13 +31,52 @@ named_complete!(
     )
 );
 
-// TODO: handle relative filenames?
-// To handle relative filenames, try to stat the file and see where the mount is
-// If the file doesn't exist, create the file and then stat it, see where the file is,
-// and delete it.
-// How do you make sure everything you deleted is correct?
-fn in_mount(filename: &str, mount: &str) -> bool {
-    Path::new(filename).starts_with(Path::new(mount))
+/// Attempts to cannonicalize a filepath.
+/// If the file does not exist, need to prepend the current directory to this path and then try
+/// again to cannonicalize.
+/// TODO: If that STILL doesn't work you have to do some more work.
+fn dash_cannonicalize(filename: &str, pwd: &PathBuf) -> Result<PathBuf> {
+    let path = Path::new(filename);
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+
+    // Then try to cannonicalize the file:
+    match canonicalize(filename) {
+        Ok(pathbuf) => {
+            return Ok(pathbuf);
+        }
+        Err(_) => {}
+    }
+
+    // prepend the pwd and then try to cannonicalize
+    // if there are "." or ".." in the relative paths this might not work
+    // Which is no good especially for the git case right?
+    // We can explicitly address this as a concern in the implementation.
+
+    let new_relative_path = pwd.clone().as_path().join(path);
+    return Ok(new_relative_path);
+
+    // Iterate through the pathbuf,
+    // Pop off each component,
+    //
+}
+
+// Run FS Metadata to see if is_dir or is_file => and then cannonicalize
+// If it can't be cannonicalized:
+//  Mkdir -p the thing
+//  Then run FS Metadata
+//  Then run "pop" to get the TOP level dir and remove that -> it should be safe to remove this.
+fn in_mount(filename: &str, mount: &str, pwd: &PathBuf) -> bool {
+    // attempt the cannonicaize the path
+    match dash_cannonicalize(filename, pwd) {
+        Ok(pathbuf) => {
+            return pathbuf.as_path().starts_with(Path::new(mount));
+        }
+        Err(_) => {
+            return false;
+        }
+    }
 }
 
 impl FileMap {
@@ -60,19 +103,70 @@ impl FileMap {
     }
 
     /// Checks which mount the filename resolves to (if any)
-    pub fn find_match(&self, filename: &str) -> Option<(String, String)> {
+    pub fn find_match(&self, filename: &str, pwd: &PathBuf) -> Option<(String, String)> {
         for (mount, ip) in self.map.iter() {
-            if in_mount(&filename, &mount) {
+            if in_mount(&filename, &mount, pwd) {
                 return Some((mount.clone(), ip.clone()));
             }
         }
         None
     }
 
+    /// Used to resolve any filestream arguments that might contain a pattern the resulting list of
+    /// multiple files.
+    /// TODO: This *only* resolves the pattern with local or absolute paths -- so to do this
+    /// correctly, the pwd must be set to the correct thing.
+    /// TODO: In addition, this won't handle if the pattern includes an environment variable is
+    /// included. Or maybe it will? Who knows?
+    /// TODO: This function assumes that the client sees a filesystem view of the underlying files
+    ///  -- but if later, Dash wanted to work with a *ssh* backend, this would need to change.
+    pub fn resolve_filestream_with_pattern(
+        &self,
+        filestream: &mut FileStream,
+    ) -> Result<Vec<FileStream>> {
+        let mut res: Vec<FileStream> = Vec::new();
+        for entry in glob(&filestream.get_name()).expect("Failed to read glob pattern") {
+            match entry {
+                Ok(path) => {
+                    let name = match path.to_str() {
+                        Some(n) => n.to_string(),
+                        None => bail!("Could not turn path: {:?} to string", path),
+                    };
+                    res.push(FileStream::new_exact(
+                        name,
+                        filestream.get_location(),
+                        filestream.get_mode(),
+                    ));
+                }
+                Err(e) => {
+                    bail!("One of the paths is an error: {:?}", e);
+                }
+            }
+        }
+        Ok(res)
+    }
+
     /// Modifies the filestream to be remote if necessary.
-    pub fn modify_stream_to_remote(&self, filestream: &mut FileStream) -> Result<()> {
+    pub fn resolve_filestream(&self, filestream: &mut FileStream, pwd: &PathBuf) -> Result<()> {
+        // first, see if there's an environment variable
+        // Note: won't work on filestreams with patterns
+        if filestream.get_name().starts_with("$") {
+            let var_name = filestream.get_name().split_at(1).1.to_string();
+            match env::var(var_name) {
+                Ok(val) => {
+                    filestream.set_name(&val);
+                }
+                Err(e) => {
+                    bail!(
+                        "Couldn't find environment variable {:?}: {:?}",
+                        filestream.get_name(),
+                        e
+                    );
+                }
+            }
+        }
         match filestream.get_location() {
-            Location::Client => match self.find_match(&filestream.get_name()) {
+            Location::Client => match self.find_match(&filestream.get_name(), pwd) {
                 Some((mount, ip)) => {
                     filestream.set_location(Location::Server(ip));
                     filestream.strip_prefix(&mount)?;

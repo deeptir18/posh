@@ -1,10 +1,11 @@
 extern crate dash;
+extern crate itertools;
 extern crate shellwords;
-
 use cmd::{CommandNode, NodeArg};
 use dash::graph::{cmd, program, rapper, read, stream, write, Location};
 use dash::util::Result;
 use failure::bail;
+use itertools::join;
 use program::{Elem, NodeId, Program};
 use rapper::Rapper;
 use read::ReadNode;
@@ -12,9 +13,15 @@ use serde::{Deserialize, Serialize};
 use shellwords::split;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::fs::File;
+use std::io::Write;
 use stream::{DashStream, FileMode, FileStream, IOType, PipeStream};
 use write::WriteNode;
 
+// TODO:
+//  two steps to add:
+//  (1) Resolve * patterns via running ls (helpful for *.INFO in RT command)
+//  (2) Add resolution of environment variables
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub struct SubCommand {
     pub elts: Vec<RawShellElement>,
@@ -28,6 +35,13 @@ impl SubCommand {
     pub fn push(&mut self, elt: RawShellElement) {
         self.elts.push(elt);
     }
+
+    /// Generates a string representation of the SubCommand.
+    /// Used for debugging.
+    pub fn to_string(&self) -> String {
+        let display_strings: Vec<String> = self.elts.iter().map(|x| x.to_string()).collect();
+        join(display_strings, " ")
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
@@ -37,6 +51,9 @@ pub struct ShellGraphNode {
 }
 
 impl ShellGraphNode {
+    pub fn to_string(&self) -> String {
+        format!("{:?}: {:?}", self.id, self.cmd.to_string())
+    }
     pub fn push(&mut self, elt: RawShellElement) {
         self.cmd.push(elt);
     }
@@ -168,6 +185,7 @@ impl ShellGraphNode {
                 .unwrap()
                 .get_mut_elem();
             stdin_elem.add_stdout(DashStream::Pipe(pipe))?;
+            new_program.add_unique_edge(stdin_node_id, cmd_node_id);
         }
         for stdout in stdout_nodes.into_iter() {
             let stdout_node_id = new_program.add_elem(Elem::Write(stdout));
@@ -183,6 +201,7 @@ impl ShellGraphNode {
                 .unwrap()
                 .get_mut_elem();
             stdout_elem.add_stdin(DashStream::Pipe(pipe))?;
+            new_program.add_unique_edge(cmd_node_id, stdout_node_id);
         }
         for stderr in stderr_nodes.into_iter() {
             let stderr_node_id = new_program.add_elem(Elem::Write(stderr));
@@ -198,6 +217,7 @@ impl ShellGraphNode {
                 .unwrap()
                 .get_mut_elem();
             stderr_elem.add_stderr(DashStream::Pipe(pipe))?;
+            new_program.add_unique_edge(cmd_node_id, stderr_node_id);
         }
         Ok(new_program)
     }
@@ -234,6 +254,28 @@ impl Default for ShellGraph {
 }
 
 impl ShellGraph {
+    fn get_node_string(&self, node_id: &NodeId) -> Result<String> {
+        match self.nodes.get(node_id) {
+            Some(n) => Ok(n.to_string()),
+            None => bail!("Did not find node id : {:?} in graph"),
+        }
+    }
+
+    /// Writes dot representation of this graph to a file for visualization.
+    pub fn write_dot(&self, filename: &str) -> Result<()> {
+        let mut file = File::create(filename)?;
+        // header
+        file.write_all(b"digraph {\n")?;
+        // iterate through edges and make a line for each
+        for edge in self.edges.iter() {
+            let left_string = self.get_node_string(&edge.left)?;
+            let right_string = self.get_node_string(&edge.right)?;
+            file.write_fmt(format_args!("{:?} -> {:?}\n", left_string, right_string))?;
+        }
+        file.write_all(b"}")?;
+        // end
+        Ok(())
+    }
     fn add_node(&mut self, cmd: SubCommand) -> NodeId {
         let node = ShellGraphNode {
             cmd: cmd,
@@ -273,24 +315,56 @@ impl ShellGraph {
         self.front.clone()
     }
 
+    pub fn get_subgraph_map(&self) -> Result<HashMap<NodeId, Program>> {
+        let mut subgraph_map: HashMap<NodeId, Program> = HashMap::default();
+        for (id, graph_node) in self.nodes.iter() {
+            let subgraph = graph_node.generate_subprogram()?;
+            subgraph_map.insert(*id, subgraph);
+        }
+        Ok(subgraph_map)
+    }
+
+    pub fn get_program_without_output_nodes(&self) -> Result<Program> {
+        // generate subgraphs for each part
+        let subgraph_map = self.get_subgraph_map()?;
+
+        let mut links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
+        let mut old_links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
+        // any links present in subgraphs
+        for (id, subgraph) in subgraph_map.iter() {
+            for edge in subgraph.get_edges_iter() {
+                old_links.push(((*id, edge.get_left()), (*id, edge.get_right())));
+            }
+        }
+
+        // connect subgraphs by pipe via adding a new edge.
+        for edge in self.edges.iter() {
+            // connect node 0 of each new subgraph
+            links.push(((edge.left, 1), (edge.right, 1)));
+        }
+        // merge all subgraphs into 1 program
+        let program = Program::merge_subgraphs(subgraph_map, old_links, links)?;
+        Ok(program)
+    }
+
     /// Takes the shell graph, which represents processes linked together by pipes,
     /// and turns it into the program Graph.
     /// This step parses any file redirections for stdin, stdout and stderr file redirections.
     /// Note that we only handle a couple of small cases.
     pub fn convert_into_program(&self) -> Result<Program> {
         // generate subgraphs for each part
-        let mut subgraph_map: HashMap<NodeId, Program> = HashMap::default();
+        let subgraph_map = self.get_subgraph_map()?;
+
         let mut links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
         let mut old_links: Vec<((NodeId, NodeId), (NodeId, NodeId))> = Vec::new();
-        for (id, graph_node) in self.nodes.iter() {
-            let subgraph = graph_node.generate_subprogram()?;
-            subgraph_map.insert(*id, subgraph);
-        }
+        // any links present in subgraphs
         for (id, subgraph) in subgraph_map.iter() {
             for edge in subgraph.get_edges_iter() {
                 old_links.push(((*id, edge.get_left()), (*id, edge.get_right())));
             }
         }
+
+        // connect subgraphs by pipe via adding a new edge.
         for edge in self.edges.iter() {
             // connect node 0 of each new subgraph
             links.push(((edge.left, 1), (edge.right, 1)));
@@ -312,7 +386,6 @@ impl ShellGraph {
                 add_output_nodes.push((*id, IOType::Stderr));
             }
         }
-        println!("add output nodes: {:?}", add_output_nodes);
         for (id, iotype) in add_output_nodes.iter() {
             let mut writenode = WriteNode::default();
             match iotype {
@@ -326,14 +399,28 @@ impl ShellGraph {
             }
             let new_id = program.add_elem(Elem::Write(writenode));
             let new_pipe = PipeStream::new(*id, new_id, *iotype)?;
-            program
-                .get_mut_node(*id)
-                .unwrap()
-                .add_stdout(DashStream::Pipe(new_pipe.clone()))?;
+            // now add the pipestream to the actual node
+            match iotype {
+                IOType::Stdout => {
+                    program
+                        .get_mut_node(*id)
+                        .unwrap()
+                        .add_stdout(DashStream::Pipe(new_pipe.clone()))?;
+                }
+
+                IOType::Stderr => {
+                    program
+                        .get_mut_node(*id)
+                        .unwrap()
+                        .add_stderr(DashStream::Pipe(new_pipe.clone()))?;
+                }
+                _ => {}
+            }
             program
                 .get_mut_node(new_id)
                 .unwrap()
                 .add_stdin(DashStream::Pipe(new_pipe.clone()))?;
+            program.add_unique_edge(*id, new_id);
         }
 
         Ok(program)
@@ -409,6 +496,20 @@ pub enum RawShellElement {
     Pipe,
     StdoutAppend,
     Subcmd(SubCommand),
+}
+
+impl RawShellElement {
+    pub fn to_string(&self) -> String {
+        match &*self {
+            RawShellElement::Str(string) => string.clone(),
+            RawShellElement::Stdin => "<".to_string(),
+            RawShellElement::Stdout => ">".to_string(),
+            RawShellElement::Stderr => "2>".to_string(),
+            RawShellElement::Pipe => "|".to_string(),
+            RawShellElement::StdoutAppend => ">>".to_string(),
+            RawShellElement::Subcmd(cmd) => cmd.to_string(),
+        }
+    }
 }
 
 pub struct ShellSplit {
@@ -487,6 +588,8 @@ impl ShellSplit {
                     elements.push(RawShellElement::Pipe);
                 }
                 _ => {
+                    // resolve any environment variables
+
                     elements.push(RawShellElement::Str(elt.clone()));
                 }
             }
@@ -682,10 +785,5 @@ mod test {
                 assert!(false);
             }
         };
-
-        // to test the correctness of the above thing, need to just test that there are nodes that
-        // have edges to the correct nodes and contain the right arguments
-        // don't actually care what the edges are
-        // but also don't want extra edges or nodes (so just need to count)
     }
 }

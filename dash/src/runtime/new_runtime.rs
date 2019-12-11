@@ -9,7 +9,7 @@ use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::{fs, thread};
 use stream::SharedStreamMap;
 /// matches client IP to folder name
-type ClientMap = HashMap<IpAddr, String>;
+pub type ClientMap = HashMap<IpAddr, String>;
 
 /// Map from client Ip to data structure that facilitates sharing streams across threads.
 type ClientStreamMap = HashMap<IpAddr, SharedStreamMap>;
@@ -141,7 +141,7 @@ fn handle_spawned_client(
                 Err(e) => {
                     let response = serialize(&rpc::ClientReturnCode::Failure)?;
                     write_msg_and_type(response.to_vec(), rpc::MessageType::Control, &mut stream)?;
-                    bail!("Could not deserialize program: {:?}", e)
+                    bail!("Error deserializing setup stream msg: {:?}", e);
                 }
             };
 
@@ -158,7 +158,10 @@ fn handle_spawned_client(
                 Err(e) => {
                     let response = serialize(&rpc::ClientReturnCode::Failure)?;
                     write_msg_and_type(response.to_vec(), rpc::MessageType::Control, &mut stream)?;
-                    bail!("Could not deserialize program: {:?}", e)
+                    bail!(
+                        "Could not deserialize program: from program execution {:?}",
+                        e
+                    )
                 }
             };
 
@@ -187,6 +190,7 @@ fn handle_spawned_client(
             };
 
             // insert this stream into the client's map
+            println!("received stream: {:?}", stream_info);
             let stream_clone = stream.try_clone()?;
             stream_map.insert(stream_info.netstream, stream_clone)?;
 

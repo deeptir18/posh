@@ -1,11 +1,12 @@
 extern crate dash;
 extern crate shellwords;
-
 use super::fileinfo::FileMap;
 use dash::dag::{node, stream};
 use dash::util::Result;
 use failure::bail;
 use shellwords::split;
+use std::path::PathBuf;
+
 /// Splits command into different stdin, stdout.
 /// Creates node::Program where args are just string args.
 /// Next steps will take the args and modify them.
@@ -79,7 +80,7 @@ fn shell_parse(
         bail!("{:?} did not have initial base_command", command);
     }
     let base_command: String = command.remove(0);
-    args.push(base_command.clone());
+    //args.push(base_command.clone());
     let mut op: node::Node = Default::default();
     op.set_name(&base_command);
 
@@ -139,17 +140,20 @@ fn get_arg(
 ) -> Result<stream::DataStream> {
     match get_arg_following(args, pattern) {
         Ok(s) => match s {
-            Some(a) => match filemap.find_match(&a) {
-                Some(fileinfo) => {
-                    let stream = stream::DataStream::strip_prefix(
-                        stream::StreamType::RemoteFile,
-                        &a,
-                        &fileinfo.0,
-                    )?;
-                    Ok(stream)
+            Some(a) => {
+                let pwd = PathBuf::new();
+                match filemap.find_match(&a, &pwd) {
+                    Some(fileinfo) => {
+                        let stream = stream::DataStream::strip_prefix(
+                            stream::StreamType::RemoteFile,
+                            &a,
+                            &fileinfo.0,
+                        )?;
+                        Ok(stream)
+                    }
+                    None => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
                 }
-                None => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
-            },
+            }
             None => Ok(default_val),
         },
         Err(e) => bail!(
@@ -260,7 +264,7 @@ mod test {
             node::OpAction::Run,
             node::ExecutionLocation::Client,
         );
-        let expected_args = vec!["cat".to_string(), "foo".to_string()];
+        let expected_args = vec!["foo".to_string()];
         assert_eq!(
             shell_parse(args, true, 0, &filemap).unwrap(),
             (expected_op, expected_args)
@@ -282,7 +286,7 @@ mod test {
                 node::OpAction::Spawn,
                 node::ExecutionLocation::Client,
             ),
-            vec!["grep".to_string()],
+            vec![],
         ));
         expected_output.push((
             node::Node::construct(
@@ -294,7 +298,7 @@ mod test {
                 node::OpAction::Spawn,
                 node::ExecutionLocation::Client,
             ),
-            vec!["wc".to_string(), "-l".to_string()],
+            vec!["-l".to_string()],
         ));
         expected_output.push((
             node::Node::construct(
@@ -306,7 +310,7 @@ mod test {
                 node::OpAction::Run,
                 node::ExecutionLocation::Client,
             ),
-            vec!["sort".to_string()],
+            vec![],
         ));
 
         assert_eq!(shell_split(command, &filemap).unwrap(), expected_output);

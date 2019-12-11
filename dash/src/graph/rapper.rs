@@ -2,7 +2,7 @@ use super::program::NodeId;
 use super::stream;
 use super::Location;
 use super::Result;
-use stream::{DashStream, IOType, NetStream, SharedPipeMap, SharedStreamMap, PipeStream};
+use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
 
 /// Checks if this is a stream that represents a TCP connection that should be initiated by this
 /// nodeid.
@@ -54,6 +54,10 @@ pub fn resolve_file_streams(streams: &mut Vec<DashStream>, parent_dir: &str) -> 
 /// Defines the set of functionality necessary to execute a node on any machine.
 /// All types of nodes implement this trait.
 pub trait Rapper {
+    fn set_id(&mut self, id: NodeId);
+    fn get_id(&self) -> NodeId;
+    /// Generates the relevant dot label string for this node for display.
+    fn get_dot_label(&self) -> Result<String>;
     /// Returns all streams this node would need to initiate.
     fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream>;
 
@@ -92,5 +96,10 @@ pub trait Rapper {
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()>;
 
-    fn replace_pipe_with_net(&mut self, pipe: PipeStream, net: NetStream, iotype: IOType) -> Result<()>;
+    fn replace_pipe_with_net(
+        &mut self,
+        pipe: PipeStream,
+        net: NetStream,
+        iotype: IOType,
+    ) -> Result<()>;
 }

@@ -31,6 +31,15 @@ impl PipeStream {
         })
     }
 
+    /// Returns string to display on a pipe stream node
+    /// Mainly used for debugging purposes.
+    pub fn get_dot_label(&self) -> String {
+        format!(
+            "PIPE:\nleft: {:?}\nright: {:?}\ntype: {:?}",
+            self.left, self.right, self.output_type
+        )
+    }
+
     pub fn get_left(&self) -> NodeId {
         self.left
     }
@@ -98,6 +107,15 @@ impl NetStream {
         })
     }
 
+    /// Returns string to display on a pipe stream node
+    /// Mainly used for debugging purposes.
+    pub fn get_dot_label(&self) -> String {
+        format!(
+            "NETPIPE:\nleft: {:?},{:?}\nright: {:?},{:?}\ntype: {:?}",
+            self.left, self.left_location, self.right, self.right_location, self.output_type
+        )
+    }
+
     pub fn get_left(&self) -> NodeId {
         self.left
     }
@@ -150,7 +168,7 @@ impl NetStream {
     }
 }
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Copy)]
 pub enum FileMode {
     /// Create the file and write to it.
     CREATE,
@@ -187,8 +205,31 @@ impl FileStream {
         }
     }
 
+    pub fn new_exact(name: String, location: Location, mode: FileMode) -> Self {
+        FileStream {
+            location: location,
+            name: name,
+            mode: mode,
+        }
+    }
+
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.to_string();
+    }
+
     pub fn set_mode(&mut self, mode: FileMode) {
         self.mode = mode;
+    }
+
+    pub fn get_dot_label(&self) -> String {
+        format!(
+            "file: {}\nloc: {:?}\nmode: {:?}",
+            self.name, self.location, self.mode
+        )
+    }
+
+    pub fn get_mode(&self) -> FileMode {
+        self.mode
     }
 
     pub fn new_from_prefix(location: Location, full_path: &str, mount: &str) -> Result<Self> {
@@ -217,7 +258,11 @@ impl FileStream {
     }
 
     /// Returns the filename with the specified directory prepended.
+    /// Note: if provided directory is "", just does nothing.
     pub fn prepend_directory(&mut self, directory: &str) -> Result<()> {
+        if directory == "" {
+            return Ok(());
+        }
         match Path::new(directory)
             .join(self.name.clone())
             .as_path()
@@ -260,6 +305,18 @@ pub enum DashStream {
 impl Default for DashStream {
     fn default() -> Self {
         DashStream::Stdout
+    }
+}
+
+impl DashStream {
+    pub fn get_dot_label(&self) -> Result<String> {
+        match self {
+            DashStream::File(fs) => Ok(fs.get_dot_label()),
+            DashStream::Pipe(ps) => Ok(ps.get_dot_label()),
+            DashStream::Tcp(ns) => Ok(ns.get_dot_label()),
+            DashStream::Stdout => Ok("STDOUT".to_string()),
+            DashStream::Stderr => Ok("STDERR".to_string()),
+        }
     }
 }
 impl Into<Option<FileStream>> for DashStream {

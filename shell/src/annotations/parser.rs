@@ -10,7 +10,7 @@ use failure::bail;
 use itertools::free::join;
 use shellwords::split;
 use std::collections::HashMap;
-
+use std::fmt;
 /// Takes a particular invocation of a command and splits it into shell Words
 /// Arguments:
 /// * `invocation`: &str - command invocation to be parsed
@@ -29,8 +29,22 @@ pub fn split_invocation(invocation: &str) -> Result<Vec<String>> {
 /// These annotations are a "whitelist".
 /// Dash will only assign types if the invocation fits within one of the annotations.
 pub struct Parser {
+    /// Command this is parsing.
     name: String,
+    /// List of annotations for this command.
     annotations: Vec<grammar::Command>,
+    /// Used for debug printing.
+    debug: bool,
+}
+
+impl fmt::Debug for Parser {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.pad(&format!("Name {:?}", self.name))?;
+        for ann in self.annotations.iter() {
+            f.pad(&format!("\n{:?}", ann))?;
+        }
+        f.pad("")
+    }
 }
 
 impl Parser {
@@ -38,6 +52,7 @@ impl Parser {
         Parser {
             name: name.to_string(),
             annotations: vec![],
+            debug: false,
         }
     }
 
@@ -233,7 +248,25 @@ impl Parser {
             }
         }
 
-        let mut matches: ArgMatches = app.get_matches_from_safe(invocation.clone())?;
+        let mut invocation_clone = invocation.clone();
+        // now, if lone_args_single_dash turned on, deal with this
+        // Note that ALL long args will be turned back into -dashes at the end of the parsing.
+        if annotation.long_arg_single_dash() {
+            for word in invocation_clone.iter_mut() {
+                match annotation.check_matches_long_option(&word) {
+                    Some(_arg) => {
+                        word.insert_str(0, "-");
+                    }
+                    None => {}
+                }
+            }
+        }
+
+        invocation_clone.insert(0, self.name.clone());
+        let mut matches: ArgMatches = match app.get_matches_from_safe(invocation_clone) {
+            Ok(m) => m,
+            Err(e) => bail!("Could not get matches: {:?}", e),
+        };
         self.assign_types(&mut matches, &annotation, annotation_map)
     }
 
@@ -258,17 +291,26 @@ impl Parser {
             match arg_info {
                 // TODO: handle multiple true properly
                 grammar::Argument::LoneOption(opt) => {
+                    // TODO: should check if the short or the long value appeared
                     if opt.short != "" {
                         typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
                     } else {
-                        typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        if annotation.long_arg_single_dash() {
+                            typed_args.push((format!("-{}", &opt.long), grammar::ArgType::Str));
+                        } else {
+                            typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        }
                     }
                 }
                 grammar::Argument::OptWithParam(opt, param) => {
                     if opt.short != "" {
                         typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
                     } else {
-                        typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        if annotation.long_arg_single_dash() {
+                            typed_args.push((format!("-{}", &opt.long), grammar::ArgType::Str));
+                        } else {
+                            typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                        }
                     }
 
                     let values = matches.values_of(arg.0.clone()).unwrap();
@@ -364,7 +406,11 @@ impl Parser {
                 Ok(p) => {
                     return Ok(p);
                 }
-                Err(_) => {}
+                Err(e) => {
+                    if self.debug {
+                        println!("Failed to parse: {:?}", e);
+                    }
+                }
             }
         }
         println!(
@@ -376,6 +422,7 @@ impl Parser {
     }
 
     fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {
+        println!("invocation: {:?}", invocation);
         let command = invocation.remove(0);
         if command != self.name {
             bail!("Invocation does not include initial command name");
@@ -401,6 +448,7 @@ mod tests {
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),
             args: vec![grammar::Argument::LoneOption(grammar::Opt::default())],
+            parsing_options: Default::default(),
         };
         let parser = Parser::new("test_command");
         match parser.validate(&annotation) {
@@ -425,6 +473,7 @@ mod tests {
                 grammar::Opt::default(),
                 grammar::Param::default(),
             )],
+            parsing_options: Default::default(),
         };
         let parser = Parser::new("test_command");
         match parser.validate(&annotation) {
@@ -458,6 +507,7 @@ mod tests {
                 param_with_list.clone(),
                 param_with_list.clone(),
             ],
+            parsing_options: Default::default(),
         };
         let parser = Parser::new("test_command");
         match parser.validate(&annotation) {
@@ -493,6 +543,7 @@ mod tests {
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),
             args: vec![param_with_comma.clone(), param_with_list.clone()],
+            parsing_options: Default::default(),
         };
         let parser = Parser::new("test_command");
         assert_eq!(parser.validate(&annotation).unwrap(), ());
@@ -510,12 +561,13 @@ mod tests {
         let annotation = grammar::Command {
             command_name: "cat".to_string(),
             args: vec![file_param],
+            parsing_options: Default::default(),
         };
 
         let mut parser = Parser::new("cat");
         parser.add_annotation(annotation).unwrap();
 
-        let invocation = vec!["cat".to_string(), "file1".to_string(), "file2".to_string()];
+        let invocation = vec!["file1".to_string(), "file2".to_string()];
         let parsed_command: grammar::ParsedCommand = parser.parse_command(invocation).unwrap();
         assert_eq!(parsed_command.command_name, "cat".to_string());
         assert_eq!(parsed_command.typed_args.len(), 2);
@@ -605,10 +657,12 @@ mod tests {
                 file_param_input,
                 extract_output_file,
             ],
+            parsing_options: Default::default(),
         };
         let create_annotation = grammar::Command {
             command_name: "tar".to_string(),
             args: vec![c_opt, z_opt, v_opt, file_param_output, create_input_file],
+            parsing_options: Default::default(),
         };
 
         let mut parser = Parser::new("tar");
@@ -616,7 +670,6 @@ mod tests {
         parser.add_annotation(extract_annotation).unwrap();
 
         let create_invocation = vec![
-            "tar".to_string(),
             "-czf".to_string(),
             "foobar.tar".to_string(),
             "foo".to_string(),
@@ -647,7 +700,6 @@ mod tests {
             .contains(&("bar".to_string(), grammar::ArgType::InputFile)));
 
         let extract_invocation1 = vec![
-            "tar".to_string(),
             "-xzf".to_string(),
             "foobar.tar".to_string(),
             "-C".to_string(),
@@ -676,11 +728,7 @@ mod tests {
         assert!(parsed_extract
             .typed_args
             .contains(&("foo/".to_string(), grammar::ArgType::OutputFile)));
-        let extract_invocation2 = vec![
-            "tar".to_string(),
-            "-xzf".to_string(),
-            "foobar.tar".to_string(),
-        ];
+        let extract_invocation2 = vec!["-xzf".to_string(), "foobar.tar".to_string()];
         let parsed_extract2: grammar::ParsedCommand =
             parser.parse_command(extract_invocation2).unwrap();
         assert_eq!(parsed_extract.command_name, "tar".to_string());

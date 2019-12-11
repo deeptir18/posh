@@ -11,12 +11,14 @@ macro_rules! named_complete {
     )
 }
 pub mod annotation_parser;
+pub mod examples;
 pub mod fileinfo;
 pub mod grammar;
 pub mod interpreter;
 pub mod parser;
 pub mod shell_interpreter;
 pub mod shell_parse;
+pub mod special_commands;
 
 // how do we do this shell parsing thing?
 // it seems that you can't just blindly go for text in between the pipes

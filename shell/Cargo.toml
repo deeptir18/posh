@@ -19,4 +19,5 @@ failure = "0.1.5"
 nom = "^4"
 itertools = "0.8.0"
 exitcode = "1.1.2"
+glob = "0.3.0"
 # conch-parser = "0.1.0" -> test to see if this can do the same types of shell parsings

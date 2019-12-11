@@ -1,6 +1,7 @@
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
+use itertools::join;
 use program::{NodeId, ProgId};
 use std::io::copy;
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
@@ -126,6 +127,11 @@ impl CommandNode {
         self.args.clear();
     }
 
+    pub fn set_args(&mut self, args: Vec<NodeArg>) {
+        self.clear_args();
+        self.args = args;
+    }
+
     pub fn name_set(&self) -> bool {
         match self.name.as_ref() {
             "" => false,
@@ -183,6 +189,26 @@ impl CommandNode {
 }
 
 impl Rapper for CommandNode {
+    fn set_id(&mut self, id: NodeId) {
+        self.node_id = id;
+    }
+
+    fn get_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    fn get_dot_label(&self) -> Result<String> {
+        // get the command name and the args!
+        let args: Vec<String> = self.args.iter().map(|a| format!("{:?}", a)).collect();
+        Ok(format!(
+            "{}:{}\nargs: {}\nloc: {:?}",
+            self.node_id,
+            self.name,
+            join(args.clone(), ",\n"),
+            self.location,
+        ))
+    }
+
     fn replace_pipe_with_net(
         &mut self,
         pipe: PipeStream,
@@ -297,12 +323,15 @@ impl Rapper for CommandNode {
         cmd.args(self.resolved_args.clone());
 
         if self.stdin.len() > 0 {
+            println!("setting stdin for {:?} to be stdio::piped", self.node_id);
             cmd.stdin(Stdio::piped());
         }
         if self.stdout.len() > 0 {
+            println!("setting stdout for {:?} to be stdio::piped", self.node_id);
             cmd.stdout(Stdio::piped());
         }
         if self.stderr.len() > 0 {
+            println!("setting stderr for {:?} to be stdio::piped", self.node_id);
             cmd.stderr(Stdio::piped());
         }
         let child = match cmd.spawn() {
@@ -311,12 +340,14 @@ impl Rapper for CommandNode {
                 bail!("Failed to spawn child: {:?}", e);
             }
         };
+        println!("spawned cmd: {:?}", cmd);
 
         if self.stdin.len() > 0 {
             let stdin_handle = match child.stdin {
                 Some(h) => h,
                 None => bail!("Could not get stdin handle for proc"),
             };
+            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stdin));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stdin),
                 OutputHandle::Stdin(stdin_handle),
@@ -328,6 +359,7 @@ impl Rapper for CommandNode {
                 Some(h) => h,
                 None => bail!("Could not get handle for child stdout"),
             };
+            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stdout));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stdout),
                 OutputHandle::Stdout(stdout_handle),
@@ -340,6 +372,7 @@ impl Rapper for CommandNode {
                 None => bail!("Could not get handle for child stderr"),
             };
 
+            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stderr));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stderr),
                 OutputHandle::Stderr(stderr_handle),
@@ -362,6 +395,10 @@ impl Rapper for CommandNode {
             let stdin_pipes = pipes.clone();
             let stdin_connections = network_connections.clone();
             let stdin_id = self.node_id;
+            println!(
+                "About to spawn thread for copying into stdin for node: {:?}",
+                self.node_id
+            );
             join_handles.push((
                 IOType::Stdin,
                 spawn(move || {
@@ -480,15 +517,17 @@ impl Rapper for CommandNode {
 
 fn copy_into_stdin(
     node_id: NodeId,
-    _prog_id: ProgId,
+    prog_id: ProgId,
     handle: OutputHandle,
     stdin_streams: Vec<DashStream>,
     mut pipes: SharedPipeMap,
     mut network_connections: SharedStreamMap,
 ) -> Result<()> {
+    println!("In function to copy into stdin for node: {:?}", node_id);
     let stdin_handle_option: Option<ChildStdin> = handle.into();
     let mut stdin_handle = stdin_handle_option.unwrap();
     for stream in stdin_streams.iter() {
+        println!("Dealing with copying stream: {:?}", stream);
         match stream {
             DashStream::Tcp(netstream) => {
                 // TODO: will the type here always be IOType::Stdout?
@@ -504,12 +543,14 @@ fn copy_into_stdin(
                 copy(&mut tcp_stream, &mut stdin_handle)?;
             }
             DashStream::Pipe(pipestream) => {
-                // assert that the stdin handle is on the right of this connection
-                assert_eq!(node_id, pipestream.get_right());
                 let handle_identifier = HandleIdentifier::new(
+                    prog_id,
                     pipestream.get_left(),
-                    node_id,
                     pipestream.get_output_type(),
+                );
+                println!(
+                    "Past assertion, looking for handle identifier {:?}",
+                    handle_identifier
                 );
                 let prev_handle = match pipes.remove(&handle_identifier) {
                     Ok(s) => s,
@@ -519,10 +560,15 @@ fn copy_into_stdin(
                         e
                     ),
                 };
+                println!("Found handle for: {:?}", handle_identifier);
                 match pipestream.get_output_type() {
                     IOType::Stdout => {
                         let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
                         let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
+                        println!(
+                            "copying into stdin of cmd node id {:?} with pipestream {:?}",
+                            node_id, pipestream
+                        );
                         copy(&mut prev_stdout_handle, &mut stdin_handle)?;
                     }
                     IOType::Stderr => {
@@ -550,7 +596,7 @@ fn copy_into_stdin(
 /// Should only be used when the stdout stream redirection is *not* a pipe on the same machine,
 /// then the process that takes this process's output from stdin will claim the handle to stdout of
 fn copy_stdout(
-    _node_id: NodeId,
+    node_id: NodeId,
     _prog_id: ProgId,
     stdout_handle: OutputHandle,
     stdout_streams: Vec<DashStream>,
@@ -569,6 +615,10 @@ fn copy_stdout(
                         e
                     ),
                 };
+                println!(
+                    "copying stdout of cmd {:?} into tcp stream {:?}",
+                    node_id, netstream
+                );
                 copy(&mut stdout_handle, &mut tcp_stream)?;
             }
             _ => {

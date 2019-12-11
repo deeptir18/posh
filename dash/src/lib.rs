@@ -9,6 +9,7 @@ pub mod graph;
 pub mod runtime;
 pub mod serialize;
 pub mod util;
+use crate::runtime::new_runtime::{ClientMap, ServerRuntime};
 use crate::runtime::runtime::ShellServer;
 use crate::runtime::runtime_util::Server;
 use std::thread;
@@ -17,6 +18,18 @@ pub fn start_shell(runtime_port: &str, client_folder: &str, debug: bool) {
     let localhost = "0.0.0.0";
     let mut shell_server = ShellServer::new(localhost, runtime_port, client_folder, debug).unwrap();
     let child = thread::spawn(move || match shell_server.handle_incoming() {
+        Ok(_) => unreachable!(),
+        Err(e) => {
+            println!("Shell server error: {:?}", e);
+        }
+    });
+    let _ = child.join();
+}
+
+pub fn start_runtime(runtime_port: &str, client_map: ClientMap, debug: bool) {
+    let localhost = "0.0.0.0";
+    let mut runtime = ServerRuntime::new(localhost, runtime_port, client_map, debug).unwrap();
+    let child = thread::spawn(move || match runtime.handle_incoming() {
         Ok(_) => unreachable!(),
         Err(e) => {
             println!("Shell server error: {:?}", e);

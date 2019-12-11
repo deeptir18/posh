@@ -8,7 +8,8 @@ pub fn main() {
     test_unnamed_arg_multiple();
     test_multiple_unnamed_arg();
     test_options_multiple_args();
-
+    test_cut_command();
+    test_jq_command();
     //test_subcommand();
 }
 
@@ -174,4 +175,52 @@ fn test_options_multiple_args() {
     for arg in matches.unwrap().args.iter() {
         println!("arg: 1: {:?}, 2: {:?}", arg.0, arg.1);
     }
+}
+
+fn test_cut_command() {
+    let mut app = App::new("cut").version("1.0").author("foo");
+    app = app.arg(
+        Arg::with_name("char")
+            .short("c")
+            .long("characters")
+            .takes_value(true),
+    );
+
+    let invocation = vec!["cut".to_string(), "-c".to_string(), "7-".to_string()];
+    let matches: Option<ArgMatches> = match app.get_matches_from_safe(invocation) {
+        Ok(p) => {
+            println!("options multiple args: {:?}", p);
+            Some(p)
+        }
+        Err(e) => {
+            println!("options multiple args: {:?}", e);
+            None
+        }
+    };
+    println!("Matches: {:?}", matches);
+}
+
+fn test_jq_command() {
+    let mut app = App::new("jq").version("1.0").author("foo");
+    app = app.arg(Arg::with_name("char").short("c"));
+    app = app.arg(Arg::with_name("query").takes_value(true));
+
+    app = app.arg(Arg::with_name("file").takes_value(true).multiple(true));
+
+    let invocation = vec![
+        "jq".to_string(),
+        "-c".to_string(),
+        "\".zannotate.routing.asn\"".to_string(),
+    ];
+    let matches: Option<ArgMatches> = match app.get_matches_from_safe(invocation) {
+        Ok(p) => {
+            println!("options multiple args: {:?}", p);
+            Some(p)
+        }
+        Err(e) => {
+            println!("options multiple args: {:?}", e);
+            None
+        }
+    };
+    println!("Matches: {:?}", matches);
 }

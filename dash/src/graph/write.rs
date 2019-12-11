@@ -1,6 +1,7 @@
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
+use itertools::join;
 use program::{NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::io::{copy, stderr, stdout};
@@ -35,6 +36,8 @@ impl WriteNode {
         for stream in self.output.iter() {
             match stream {
                 DashStream::File(fs) => ret.push(fs.get_location()),
+                DashStream::Stdout => ret.push(Location::Client),
+                DashStream::Stderr => ret.push(Location::Client),
                 _ => {}
             }
         }
@@ -42,6 +45,31 @@ impl WriteNode {
     }
 }
 impl Rapper for WriteNode {
+    fn set_id(&mut self, id: NodeId) {
+        self.node_id = id;
+    }
+
+    fn get_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    fn get_dot_label(&self) -> Result<String> {
+        let outputs: Result<Vec<String>> = self
+            .output
+            .iter()
+            .map(|stream| stream.get_dot_label())
+            .collect();
+        match outputs {
+            Ok(o) => Ok(format!(
+                "{}: {}\nloc: {:?}",
+                self.node_id,
+                join(o, "\n\n"),
+                self.location
+            )),
+            Err(e) => bail!("{:?}", e),
+        }
+    }
+
     fn replace_pipe_with_net(
         &mut self,
         pipe: PipeStream,
@@ -112,7 +140,7 @@ impl Rapper for WriteNode {
     }
 
     fn get_stderr(&self) -> Vec<DashStream> {
-        unimplemented!();
+        vec![]
     }
 
     fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
@@ -163,9 +191,17 @@ impl Rapper for WriteNode {
                                 copy(&mut tcpstream, &mut file_handle)?;
                             }
                             DashStream::Stdout => {
+                                println!(
+                                    "write node about to copy from netstream: {:?} to stdout",
+                                    netstream
+                                );
                                 copy(&mut tcpstream, &mut stdout())?;
                             }
                             DashStream::Stderr => {
+                                println!(
+                                    "write node about to copy from netstream: {:?} to stderr",
+                                    netstream
+                                );
                                 copy(&mut tcpstream, &mut stderr())?;
                             }
                             _ => {
@@ -176,7 +212,7 @@ impl Rapper for WriteNode {
                     DashStream::Pipe(pipestream) => {
                         let handle_identifier = HandleIdentifier::new(
                             self.prog_id,
-                            self.node_id,
+                            pipestream.get_left(),
                             pipestream.get_output_type(),
                         );
                         let mut output_handle = pipes.remove(&handle_identifier)?;
@@ -187,6 +223,10 @@ impl Rapper for WriteNode {
                                     .write(true)
                                     .create(true)
                                     .open(filestream.get_name())?;
+                                println!(
+                                    "going to copy from {:?} into {:?}",
+                                    pipestream, filestream
+                                );
                                 copy(&mut output_handle, &mut file_handle)?;
                             }
                             DashStream::Stdout => {

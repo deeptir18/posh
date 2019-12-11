@@ -154,14 +154,27 @@ named_complete!(
         }
     )
 );
+
+named_complete!(
+    parse_long_name<String>,
+    map!(many1!(alt!(alpha1 | tag!("-") | tag!("_"))), |elts: Vec<
+        CompleteByteSlice,
+    >| {
+        let mut name = "".to_string();
+        for elt in elts.iter() {
+            let str_repr = str::from_utf8(elt.0).unwrap();
+            name.push_str(str_repr);
+        }
+        name
+    })
+);
+
+// TODO: need to include dashes here somehow
 named_complete!(
     parse_long<Info>,
     map!(
-        do_parse!(tag!("long:") >> word: alpha1 >> (word)),
-        |s: CompleteByteSlice| {
-            let st = str::from_utf8(s.0).unwrap();
-            Info::Long(String::from(st))
-        }
+        do_parse!(tag!("long:") >> word: parse_long_name >> (word)),
+        |s: String| { Info::Long(s) }
     )
 );
 named_complete!(
@@ -417,12 +430,70 @@ named_complete!(
         }
     )
 );
+
+named_complete!(
+    parse_long_arg_single_dash<IndividualParseOption>,
+    map!(tag!("long_arg_single_dash"), {
+        |_| IndividualParseOption::LongArgSingleDash
+    })
+);
+named_complete!(
+    parse_individual_parsing_option<IndividualParseOption>,
+    alt!(parse_long_arg_single_dash)
+);
+named_complete!(
+    parse_parsing_options<Result<ParsingOptions>>,
+    map!(
+        many0!(do_parse!(
+            info: delimited!(
+                opt!(tag!(",")),
+                parse_individual_parsing_option,
+                opt!(tag!(","))
+            ) >> (info)
+        )),
+        |vec_options: Vec<IndividualParseOption>| {
+            let mut parsing_opt = ParsingOptions {
+                long_arg_single_dash: false,
+            };
+            for opt in vec_options.iter() {
+                match opt {
+                    IndividualParseOption::LongArgSingleDash => {
+                        parsing_opt.long_arg_single_dash = true
+                    }
+                }
+            }
+            Ok(parsing_opt)
+        }
+    )
+);
+
+// TODO: how do we add in more general options here -- how to fit in this "long_arg_single_dash"
+// syntax so it works?
+// Then, need to define the syntax for splitting commands across inputs
 named_complete!(
     parse_annotation<Result<Command>>,
     map!(
-        do_parse!(name: alpha1 >> tag!(":") >> arg_list: parse_arguments >> (name, arg_list)),
-        |(n, arg_list): (CompleteByteSlice, Result<Vec<Argument>>)| {
+        do_parse!(
+            name: alpha1
+                >> opt!(tag!("["))
+                >> parsing_options: parse_parsing_options
+                >> opt!(tag!("]"))
+                >> tag!(":")
+                >> arg_list: parse_arguments
+                >> (name, parsing_options, arg_list)
+        ),
+        |(n, parsing_options, arg_list): (
+            CompleteByteSlice,
+            Result<ParsingOptions>,
+            Result<Vec<Argument>>
+        )| {
             let name = str::from_utf8(n.0).unwrap();
+            let opts = match parsing_options {
+                Ok(o) => o,
+                Err(e) => {
+                    bail!("Could not parse parsing options: {:?}", e);
+                }
+            };
             let args = match arg_list {
                 Ok(a) => a,
                 Err(e) => {
@@ -432,6 +503,7 @@ named_complete!(
             Ok(Command {
                 command_name: String::from(name),
                 args: args,
+                parsing_options: opts,
             })
         }
     )
@@ -439,9 +511,7 @@ named_complete!(
 
 /// Constructor that parses the annotation string into a struct.
 /// Assumes annotations are of the form:
-/// TODO: could be nice to ensure that either short or long is provided, but desc is optional (so
-/// later maybe changing this to a formal grammar is important)
-/// [command_name]: FLAGS:[(short:o,long:option,desc:desc),()...
+/// command_name[PARSING_OPTIONS:long_arg_single_dash]: FLAGS:[(short:o,long:option,desc:desc),()...
 ///                 OPTPARAMS:(short:o,long:option,desc:desc,num:[zero|one|many(separator:",")|specific_size(size:size,separator:",")], type:[input_file|output_file|str]),()...]
 ///                 PARAMS:(num:[one|many|specific_size...]])
 ///
@@ -455,6 +525,52 @@ impl Command {
             },
             Err(e) => bail!("Failed parsing annotaton: {:?}", e),
         }
+    }
+
+    pub fn long_arg_single_dash(&self) -> bool {
+        self.parsing_options.long_arg_single_dash
+    }
+
+    /// Used for checking if an option passed into the program matches a long option.
+    /// For options that are preceeded by a single dash instead of multiple dashes.
+    // TODO: this is sort of hacky -> e.g. what is a better way to do this check?
+    pub fn check_matches_long_option(&self, word: &str) -> Option<Argument> {
+        // first check if this argument starts with a -
+        match word.chars().next() {
+            Some(ch) => {
+                if ch != "-".chars().next().unwrap() {
+                    return None;
+                }
+            }
+            None => {
+                return None;
+            }
+        }
+
+        for arg in self.args.iter() {
+            match arg {
+                Argument::LoneOption(opt) => {
+                    if opt.long == "" {
+                        continue;
+                    }
+                    let name = format!("-{}", opt.long);
+                    if word.to_owned().starts_with(name.as_str()) {
+                        return Some(arg.clone());
+                    }
+                }
+                Argument::OptWithParam(opt, _param) => {
+                    if opt.long == "" {
+                        continue;
+                    }
+                    let name = format!("-{}", opt.long);
+                    if word.to_owned().starts_with(name.as_str()) {
+                        return Some(arg.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
     }
 }
 

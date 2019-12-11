@@ -5,12 +5,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map;
 use std::collections::HashMap;
 use std::fmt;
+use std::fs::File;
 use std::slice;
 use std::thread;
 use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
 use thread::{spawn, JoinHandle};
 pub type NodeId = u32;
 pub type ProgId = u32;
+use std::io::Write;
 
 /// Elements can be read, write, or command nodes
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -21,6 +23,40 @@ pub enum Elem {
 }
 
 impl Rapper for Elem {
+    fn set_id(&mut self, id: NodeId) {
+        match self {
+            Elem::Write(write_node) => write_node.set_id(id),
+            Elem::Read(read_node) => read_node.set_id(id),
+            Elem::Cmd(cmd_node) => cmd_node.set_id(id),
+        }
+    }
+    fn get_id(&self) -> NodeId {
+        match self {
+            Elem::Write(write_node) => write_node.get_id(),
+            Elem::Read(read_node) => read_node.get_id(),
+            Elem::Cmd(cmd_node) => cmd_node.get_id(),
+        }
+    }
+    /// Turns an element (graph node) into dot format with the correct features.
+    fn get_dot_label(&self) -> Result<String> {
+        match self {
+            Elem::Write(write_node) => {
+                let label = write_node.get_dot_label()?;
+                let node = format!("[shape=diamond label={:?}]", label);
+                Ok(node)
+            }
+            Elem::Read(read_node) => {
+                let label = read_node.get_dot_label()?;
+                let node = format!("[shape=diamond label={:?}]", label);
+                Ok(node)
+            }
+            Elem::Cmd(cmd_node) => {
+                let label = cmd_node.get_dot_label()?;
+                let node = format!("[shape=oval label={:?}]", label);
+                Ok(node)
+            }
+        }
+    }
     fn replace_pipe_with_net(
         &mut self,
         pipe: PipeStream,
@@ -66,17 +102,17 @@ impl Rapper for Elem {
 
     fn get_stdout(&self) -> Vec<DashStream> {
         match self {
-            Elem::Write(write_node) => write_node.get_stdin(),
-            Elem::Read(read_node) => read_node.get_stdin(),
-            Elem::Cmd(cmd_node) => cmd_node.get_stdin(),
+            Elem::Write(write_node) => write_node.get_stdout(),
+            Elem::Read(read_node) => read_node.get_stdout(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stdout(),
         }
     }
 
     fn get_stderr(&self) -> Vec<DashStream> {
         match self {
-            Elem::Write(write_node) => write_node.get_stdin(),
-            Elem::Read(read_node) => read_node.get_stdin(),
-            Elem::Cmd(cmd_node) => cmd_node.get_stdin(),
+            Elem::Write(write_node) => write_node.get_stderr(),
+            Elem::Read(read_node) => read_node.get_stderr(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stderr(),
         }
     }
 
@@ -171,6 +207,11 @@ pub struct Node {
 }
 
 impl Node {
+    pub fn get_dot_label(&self) -> Result<String> {
+        let label = self.elem.get_dot_label()?;
+        Ok(format!("{:?} {}", self.id, label))
+    }
+
     /// Returns a copy of the pipestream where the left and the right are given node ids.
     /// One of left and right should be this node's id.
     /// TODO: make this function not use a copy.
@@ -324,6 +365,13 @@ impl Link {
         self.left
     }
 
+    pub fn get_dot_label(&self) -> Result<String> {
+        Ok(format!(
+            "{:?} -> {:?} [style=dashed,color=grey]",
+            self.left, self.right
+        ))
+    }
+
     pub fn get_right(&self) -> NodeId {
         self.right
     }
@@ -361,6 +409,140 @@ pub enum MergeDirection {
 }
 
 impl Program {
+    pub fn write_dot(&self, filename: &str) -> Result<()> {
+        let mut file = File::create(filename)?;
+        file.write_all(b"digraph {\n")?;
+        // write each node and defining characteristics
+        for (_, node) in self.nodes.iter() {
+            let label = node.get_dot_label()?;
+            file.write_fmt(format_args!("{}\n", label))?;
+        }
+
+        // write all the *graph* edges
+        for edge in self.edges.iter() {
+            let label = edge.get_dot_label()?;
+            file.write_fmt(format_args!("{}\n", label))?;
+        }
+
+        // figure out the list of pipes and where they come from
+        let mut pipe_map: HashMap<PipeStream, (NodeId, NodeId)> = HashMap::default();
+        let mut net_map: HashMap<NetStream, (NodeId, NodeId)> = HashMap::default();
+
+        // now write in all pipestreams and netstreams as separate nodes, and separate edges
+        for (_, node) in self.nodes.iter() {
+            // iterate through stdout, stderr
+            for stream in node.get_stdout() {
+                match stream {
+                    DashStream::Pipe(ps) => match pipe_map.get_mut(&ps) {
+                        Some(mut info) => {
+                            info.0 = node.get_id();
+                        }
+                        None => {
+                            pipe_map.insert(ps.clone(), (node.get_id(), 0));
+                        }
+                    },
+                    DashStream::Tcp(ns) => match net_map.get_mut(&ns) {
+                        Some(info) => {
+                            info.0 = node.get_id();
+                        }
+                        None => {
+                            net_map.insert(ns.clone(), (node.get_id(), 0));
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            for stream in node.get_stderr() {
+                match stream {
+                    DashStream::Pipe(ps) => match pipe_map.get_mut(&ps) {
+                        Some(mut info) => {
+                            info.0 = node.get_id();
+                        }
+                        None => {
+                            pipe_map.insert(ps.clone(), (node.get_id(), 0));
+                        }
+                    },
+                    DashStream::Tcp(ns) => match net_map.get_mut(&ns) {
+                        Some(mut info) => {
+                            info.0 = node.get_id();
+                        }
+                        None => {
+                            net_map.insert(ns.clone(), (node.get_id(), 0));
+                        }
+                    },
+                    _ => {}
+                }
+            }
+            for stream in node.get_stdin() {
+                match stream {
+                    DashStream::Pipe(ps) => match pipe_map.get_mut(&ps) {
+                        Some(mut info) => {
+                            info.1 = node.get_id();
+                        }
+                        None => {
+                            pipe_map.insert(ps.clone(), (0, node.get_id()));
+                        }
+                    },
+                    DashStream::Tcp(ns) => match net_map.get_mut(&ns) {
+                        Some(mut info) => {
+                            info.1 = node.get_id();
+                        }
+                        None => {
+                            net_map.insert(ns.clone(), (0, node.get_id()));
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
+        let mut new_counter = self.counter + 1;
+        // now iterate over all pipes, adding nodes
+        for (ps, endpoints) in pipe_map.iter() {
+            file.write_fmt(format_args!(
+                "{:?} [shape=box,label={:?}]\n",
+                new_counter,
+                ps.get_dot_label()
+            ))?;
+            let left = endpoints.0;
+            let right = endpoints.1;
+            if left == 0 && right == 0 {
+                bail!("Pipe with both left and right not found!");
+            }
+            if left == 0 {
+                file.write_fmt(format_args!("{} -> {}\n", new_counter, right))?;
+            } else if right == 0 {
+                file.write_fmt(format_args!("{} -> {}\n", left, new_counter))?;
+            } else {
+                file.write_fmt(format_args!("{} -> {} -> {}\n", left, new_counter, right))?;
+            }
+            new_counter += 1;
+        }
+
+        for (ns, endpoints) in net_map.iter() {
+            file.write_fmt(format_args!(
+                "{:?} [shape=box,label={:?}]\n",
+                new_counter,
+                ns.get_dot_label()
+            ))?;
+            let left = endpoints.0;
+            let right = endpoints.1;
+            if left == 0 && right == 0 {
+                bail!("Pipe with both left and right not found!");
+            }
+            if left == 0 {
+                file.write_fmt(format_args!("{} -> {}\n", new_counter, right))?;
+            } else if right == 0 {
+                file.write_fmt(format_args!("{} -> {}\n", left, new_counter))?;
+            } else {
+                file.write_fmt(format_args!("{} -> {} -> {}\n", left, new_counter, right))?;
+            }
+            new_counter += 1;
+        }
+
+        file.write_all(b"}")?;
+        Ok(())
+    }
+
     pub fn get_id(&self) -> ProgId {
         self.id
     }
@@ -393,8 +575,6 @@ impl Program {
         existing_links: Vec<((NodeId, NodeId), (NodeId, NodeId))>,
         new_links: Vec<((NodeId, NodeId), (NodeId, NodeId))>,
     ) -> Result<Self> {
-        println!("existing links: {:?}", existing_links);
-        println!("new links: {:?}", new_links);
         let mut program = Program::default();
         let mut id_map: HashMap<(NodeId, NodeId), NodeId> = HashMap::default();
 
@@ -427,31 +607,22 @@ impl Program {
                     for stream in readnode.get_stdout_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                // if the right side is the right side of the pipe -- change both
-                                // pointers
-                                if pipestream.get_right() == *right {
-                                    pipestream.set_left(*left);
-                                    pipestream.set_right(*right);
-                                }
+                                pipestream.set_left(*left);
+                                pipestream.set_right(*right);
                             }
                             _ => {}
                         }
                     }
                 }
                 Elem::Write(ref mut _writenode) => {
-                    bail!("Shouldn't be a link to another node out of a write node");
                     // NOOP (no pipes coming out of writenodes)
                 }
                 Elem::Cmd(ref mut cmdnode) => {
                     for stream in cmdnode.get_stdout_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                // if the right side is the right side of the pipe -- change both
-                                // pointers
-                                if pipestream.get_right() == *right {
-                                    pipestream.set_left(*left);
-                                    pipestream.set_right(*right);
-                                }
+                                pipestream.set_left(*left);
+                                pipestream.set_right(*right);
                             }
                             _ => {}
                         }
@@ -460,12 +631,8 @@ impl Program {
                     for stream in cmdnode.get_stderr_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                // if the right side is the right side of the pipe -- change both
-                                // pointers
-                                if pipestream.get_right() == *right {
-                                    pipestream.set_left(*left);
-                                    pipestream.set_right(*right);
-                                }
+                                pipestream.set_left(*left);
+                                pipestream.set_right(*right);
                             }
                             _ => {}
                         }
@@ -474,19 +641,13 @@ impl Program {
             }
             let right_elem = program.get_mut_node(*right).unwrap().get_mut_elem();
             match right_elem {
-                Elem::Read(ref mut _readnode) => {
-                    bail!("Should not have pipe coming into readnode");
-                }
+                Elem::Read(ref mut _readnode) => {}
                 Elem::Write(ref mut writenode) => {
-                    for stream in writenode.get_stdout_iter_mut() {
+                    for stream in writenode.get_stdin_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                // if the right side is the right side of the pipe -- change both
-                                // pointers
-                                if pipestream.get_right() == *right {
-                                    pipestream.set_left(*left);
-                                    pipestream.set_right(*right);
-                                }
+                                pipestream.set_left(*left);
+                                pipestream.set_right(*right);
                             }
                             _ => {}
                         }
@@ -496,12 +657,9 @@ impl Program {
                     for stream in cmdnode.get_stdin_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                // if the right side is the right side of the pipe -- change both
-                                // pointers
-                                if pipestream.get_right() == *right {
-                                    pipestream.set_left(*left);
-                                    pipestream.set_right(*right);
-                                }
+                                println!("modifying pipstream: {:?}", pipestream);
+                                pipestream.set_left(*left);
+                                pipestream.set_right(*right);
                             }
                             _ => {}
                         }
@@ -640,11 +798,7 @@ impl Program {
             self.nodes
                 .get_mut(&link.get_right())
                 .unwrap()
-                .replace_pipe_with_net(
-                    pipestream.clone(),
-                    new_stream.clone(),
-                    pipestream.get_output_type(),
-                )?;
+                .replace_pipe_with_net(pipestream.clone(), new_stream.clone(), IOType::Stdin)?;
         }
         Ok(())
     }
@@ -686,7 +840,8 @@ impl Program {
         self.nodes.iter().map(|(k, _)| k).cloned().collect()
     }
 
-    pub fn add_elem(&mut self, elem: Elem) -> NodeId {
+    pub fn add_elem(&mut self, mut elem: Elem) -> NodeId {
+        elem.set_id(self.counter + 1);
         let node: Node = Node {
             elem: elem,
             id: self.counter + 1,
@@ -782,18 +937,22 @@ impl Program {
     /// So maybe traverse from the sinks backwards (insert into a list)
     pub fn execution_order(&self) -> Vec<NodeId> {
         let mut path: Vec<NodeId> = Vec::new();
+        let mut stack: Vec<NodeId> = Vec::new();
         for node_id in self.sink_nodes.iter() {
-            // find the dependent nodes
-            let dependent_nodes = self.find_dependent_nodes(*node_id);
-            for dependence in dependent_nodes.iter() {
-                if !(path.contains(dependence)) {
-                    path.insert(0, *dependence);
+            stack.push(*node_id);
+        }
+
+        while stack.len() > 0 {
+            let node = stack.pop().unwrap();
+            if !path.contains(&node) {
+                path.insert(0, node);
+                for dependence in self.find_dependent_nodes(node) {
+                    stack.push(dependence);
                 }
             }
         }
         path
     }
-
     /// Resolves all the nodes in this program with the given folder.
     pub fn resolve_args(&mut self, folder: &str) -> Result<()> {
         for (_, node) in self.nodes.iter_mut() {
@@ -810,6 +969,7 @@ impl Program {
     pub fn execute(&mut self, stream_map: SharedStreamMap) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
+        println!("execution order of nodes: {:?}", execution_order);
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
 
         // First execute any commands, e.g. spawn the initial processes
@@ -826,6 +986,7 @@ impl Program {
             let mut node_clone = node.clone();
             // This call is non-blocking
             node_clone.execute(pipe_map_copy, stream_map_copy)?;
+            println!("finished spawning: {:?}", node);
         }
 
         // Next, loop over and run redirection commands
@@ -841,6 +1002,7 @@ impl Program {
             let stream_map_copy = stream_map.clone();
             let mut node_clone = node.clone();
             // This call is non-blocking
+            println!("about to run redirection for: {:?},", node_id);
             node_threads.push(spawn(move || {
                 node_clone.run_redirection(pipe_map_copy, stream_map_copy)
             }));
@@ -860,6 +1022,7 @@ impl Program {
                 }
             }
         }
+        println!("joined all the threads");
 
         Ok(())
     }

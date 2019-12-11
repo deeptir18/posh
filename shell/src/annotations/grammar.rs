@@ -126,12 +126,33 @@ pub enum SizeInfo {
     Delimiter(ListSeparator),
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct ParsingOptions {
+    /// Option to configure that long options can be parsed with a single dash.
+    pub long_arg_single_dash: bool,
+}
+
+impl Default for ParsingOptions {
+    fn default() -> Self {
+        ParsingOptions {
+            long_arg_single_dash: true,
+        }
+    }
+}
+
+pub enum IndividualParseOption {
+    LongArgSingleDash,
+}
+
 /// An annotation is a command name and a vector of args
-/// TODO: impl Iter (?)
 #[derive(Debug, PartialEq, Eq)]
 pub struct Command {
+    /// Name of command to be parsed.
     pub command_name: String,
+    /// Summary of arguments passed and their types.
     pub args: Vec<Argument>,
+    /// Separate parsing options that should be passed into the parser.
+    pub parsing_options: ParsingOptions,
 }
 
 /// A ParsedCommand is a command name, with *specific* String arguments
@@ -153,6 +174,7 @@ impl Clone for Command {
         Command {
             command_name: self.command_name.clone(),
             args: self.args.iter().map(|x| x.clone()).collect(),
+            parsing_options: self.parsing_options.clone(),
         }
     }
 }

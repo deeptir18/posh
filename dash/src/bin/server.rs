@@ -1,16 +1,23 @@
 extern crate dash;
 extern crate structopt;
 extern crate structopt_derive;
-
+use std::collections::HashMap;
+use std::net::{IpAddr, Ipv4Addr};
+use std::process;
+use std::str::FromStr;
 use structopt::StructOpt;
-
 #[derive(Debug, StructOpt)]
-#[structopt(name = "Server", about = "Server Binary")]
+#[structopt(
+    name = "Server",
+    about = "Server Binary for running Dash evaluation experiments with a single client."
+)]
 struct Opt {
+    #[structopt(short = "ip", long = "ip_address", help = "IP address for client")]
+    ip_addr: String,
     #[structopt(
         short = "f",
         long = "folder",
-        help = "Path to store libraries and such"
+        help = "Path to for this client's shared folder on the server."
     )]
     client_folder: String,
     #[structopt(short = "run", long = "runtime_port", default_value = "1234")]
@@ -21,8 +28,19 @@ struct Opt {
 
 fn main() {
     let opt = Opt::from_args();
-    let client_folder: String = opt.client_folder;
     let runtime_port: String = opt.runtime_port;
     let debug: bool = opt.debug;
-    dash::start_shell(&runtime_port, &client_folder, debug);
+    let ip_addr = opt.ip_addr;
+    let client_folder = opt.client_folder;
+    let mut client_map: HashMap<IpAddr, String> = HashMap::default();
+    // local loopback
+    let addr = match Ipv4Addr::from_str(&ip_addr) {
+        Ok(a) => a,
+        Err(e) => {
+            eprintln!("Not valid IPV4Addr: {:?} -> {:?}", ip_addr, e);
+            process::exit(exitcode::USAGE);
+        }
+    };
+    client_map.insert(IpAddr::V4(addr), client_folder.clone());
+    dash::start_runtime(&runtime_port, client_map, debug);
 }
