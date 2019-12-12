@@ -971,7 +971,7 @@ impl Program {
         let execution_order = self.execution_order();
         println!("execution order of nodes: {:?}", execution_order);
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
-
+        let mut node_thread_ids: Vec<NodeId> = Vec::new();
         // First execute any commands, e.g. spawn the initial processes
         for node_id in execution_order.iter() {
             let node = match self.nodes.get_mut(node_id) {
@@ -1006,21 +1006,28 @@ impl Program {
             node_threads.push(spawn(move || {
                 node_clone.run_redirection(pipe_map_copy, stream_map_copy)
             }));
+            node_thread_ids.push(*node_id);
         }
 
         // Join all the threads to make sure it worked
+        let mut count: usize = 0;
         for thread in node_threads {
             match thread.join() {
                 Ok(res) => match res {
                     Ok(_) => {}
                     Err(e) => {
-                        bail!("Node failed to execute: {:?}", e);
+                        bail!(
+                            "Node failed to execute: {:?} id {:?}",
+                            e,
+                            node_thread_ids[count]
+                        );
                     }
                 },
                 Err(e) => {
                     bail!("Thread failed to join!: {:?}", e);
                 }
             }
+            count += 1;
         }
         println!("joined all the threads");
 

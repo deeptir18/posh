@@ -142,7 +142,7 @@ fn get_arg(
         Ok(s) => match s {
             Some(a) => {
                 let pwd = PathBuf::new();
-                match filemap.find_match(&a, &pwd) {
+                match filemap.find_match_str(&a, &pwd) {
                     Some(fileinfo) => {
                         let stream = stream::DataStream::strip_prefix(
                             stream::StreamType::RemoteFile,

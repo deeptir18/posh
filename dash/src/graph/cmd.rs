@@ -1,9 +1,9 @@
+use super::rapper::copy_wrapper as copy;
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{NodeId, ProgId};
-use std::io::copy;
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::slice::IterMut;
 use std::thread;

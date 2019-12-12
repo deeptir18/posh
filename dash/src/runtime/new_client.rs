@@ -198,7 +198,7 @@ fn run_stream_setup(
             };
             let mut stream = TcpStream::connect(addr)?;
             // send a stream connection message
-            // TODO: do we need to convert the stream_identifier in anyway?
+            // TODO:edo we need to convert the stream_identifier in anyway?
             let netstream_info: rpc::NetworkStreamInfo = rpc::NetworkStreamInfo {
                 loc: Location::Client,
                 prog_id: prog_id,

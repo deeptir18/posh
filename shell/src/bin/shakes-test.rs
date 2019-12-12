@@ -74,7 +74,7 @@ fn main() {
         }
     };
 
-    match test_cmd("cat /home/deeptir/research/fs_project/client_folders/local/shakes_new.txt | wc | awk '{print \"Lines: \" $1 \"\tWords: \" $2 \"\tCharacter: \" $3 }' > /home/deeptir/research/fs_project/client_folders/local_extra/foo.txt", &mut interpreter, &mut client) {
+    match test_cmd("cat /home/deeptir/mnt/dash_server/shakes_new.txt | wc | awk '{print \"Lines: \" $1 \"\tWords: \" $2 \"\tCharacter: \" $3 }' > /home/deeptir/research/fs_project/client_folders/local_extra/foo.txt", &mut interpreter, &mut client) {
         Ok(_) => println!("Successfully ran command remotely while directing output to file"),
         Err(e) => println!("Failed to run command: {:?}", e),
     }

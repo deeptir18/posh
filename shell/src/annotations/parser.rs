@@ -285,6 +285,7 @@ impl Parser {
     ) -> Result<grammar::ParsedCommand> {
         let mut typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
         // TODO: matches.args.iter() might not be publicly available
+        // Run two loops, to make sure lone arguments go at the end
         for arg in matches.args.iter() {
             let arg_info: &grammar::Argument =
                 &annotation.args[annotation_map[arg.0.clone()] as usize];
@@ -350,6 +351,13 @@ impl Parser {
                         }
                     }
                 }
+                _ => {}
+            }
+        }
+        for arg in matches.args.iter() {
+            let arg_info: &grammar::Argument =
+                &annotation.args[annotation_map[arg.0.clone()] as usize];
+            match arg_info {
                 grammar::Argument::LoneParam(param) => {
                     let values = matches.values_of(arg.0.clone()).unwrap();
                     match param.size {
@@ -387,6 +395,7 @@ impl Parser {
                         }
                     }
                 }
+                _ => {}
             }
         }
 

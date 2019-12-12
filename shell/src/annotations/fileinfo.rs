@@ -7,7 +7,6 @@ use nom::types::CompleteByteSlice;
 use nom::*;
 use std::collections::HashMap;
 use std::env;
-use std::fs::canonicalize;
 use std::fs::File;
 use std::io::{prelude::*, BufReader};
 use std::path::Path;
@@ -31,52 +30,14 @@ named_complete!(
     )
 );
 
-/// Attempts to cannonicalize a filepath.
-/// If the file does not exist, need to prepend the current directory to this path and then try
-/// again to cannonicalize.
-/// TODO: If that STILL doesn't work you have to do some more work.
-fn dash_cannonicalize(filename: &str, pwd: &PathBuf) -> Result<PathBuf> {
-    let path = Path::new(filename);
-    if path.is_absolute() {
-        return Ok(path.to_path_buf());
-    }
-
-    // Then try to cannonicalize the file:
-    match canonicalize(filename) {
-        Ok(pathbuf) => {
-            return Ok(pathbuf);
-        }
-        Err(_) => {}
-    }
-
-    // prepend the pwd and then try to cannonicalize
-    // if there are "." or ".." in the relative paths this might not work
-    // Which is no good especially for the git case right?
-    // We can explicitly address this as a concern in the implementation.
-
-    let new_relative_path = pwd.clone().as_path().join(path);
-    return Ok(new_relative_path);
-
-    // Iterate through the pathbuf,
-    // Pop off each component,
-    //
-}
-
 // Run FS Metadata to see if is_dir or is_file => and then cannonicalize
 // If it can't be cannonicalized:
 //  Mkdir -p the thing
 //  Then run FS Metadata
 //  Then run "pop" to get the TOP level dir and remove that -> it should be safe to remove this.
-fn in_mount(filename: &str, mount: &str, pwd: &PathBuf) -> bool {
-    // attempt the cannonicaize the path
-    match dash_cannonicalize(filename, pwd) {
-        Ok(pathbuf) => {
-            return pathbuf.as_path().starts_with(Path::new(mount));
-        }
-        Err(_) => {
-            return false;
-        }
-    }
+fn in_mount(filename: &str, mount: &str, _pwd: &PathBuf) -> bool {
+    // path should already be cannonicalized
+    return Path::new(filename).starts_with(Path::new(mount));
 }
 
 impl FileMap {
@@ -99,13 +60,37 @@ impl FileMap {
             };
             ret.insert(file.to_string(), ip.to_string());
         }
+        println!("filemap: {:?}", ret);
         Ok(FileMap { map: ret })
     }
 
-    /// Checks which mount the filename resolves to (if any)
-    pub fn find_match(&self, filename: &str, pwd: &PathBuf) -> Option<(String, String)> {
+    /// TODO: here for backwards compatibility
+    /// Can remove eventually
+    pub fn find_match_str(&self, filename: &str, pwd: &PathBuf) -> Option<(String, String)> {
+        // first, canonicalize the path
         for (mount, ip) in self.map.iter() {
             if in_mount(&filename, &mount, pwd) {
+                return Some((mount.clone(), ip.clone()));
+            }
+        }
+        None
+    }
+
+    /// Checks which mount the filename resolves to (if any)
+    pub fn find_match(
+        &self,
+        filestream: &mut FileStream,
+        pwd: &PathBuf,
+    ) -> Option<(String, String)> {
+        // first, canonicalize the path
+        match filestream.dash_cannonicalize(pwd) {
+            Ok(_) => {}
+            Err(e) => {
+                println!("Could not canonicalize fs: {:?} -> {:?}", filestream, e);
+            }
+        }
+        for (mount, ip) in self.map.iter() {
+            if in_mount(&filestream.get_name(), &mount, pwd) {
                 return Some((mount.clone(), ip.clone()));
             }
         }
@@ -166,7 +151,7 @@ impl FileMap {
             }
         }
         match filestream.get_location() {
-            Location::Client => match self.find_match(&filestream.get_name(), pwd) {
+            Location::Client => match self.find_match(filestream, pwd) {
                 Some((mount, ip)) => {
                     filestream.set_location(Location::Server(ip));
                     filestream.strip_prefix(&mount)?;

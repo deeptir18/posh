@@ -121,12 +121,14 @@ impl ShellGraphNode {
                     }
                 }
                 RawShellElement::StdoutAppend => {
+                    println!("reaching stdout append");
                     if let Some(next_elt) = iter.next() {
                         match next_elt {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
                                 let mut fs = FileStream::new(filename, Location::Client);
                                 fs.set_mode(FileMode::APPEND);
+                                println!("We set filemode to be append I promise");
                                 writenode.add_stdout(DashStream::File(fs))?;
                                 stdout_nodes.push(writenode);
                             }
@@ -512,6 +514,7 @@ impl RawShellElement {
     }
 }
 
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct ShellSplit {
     elts: Vec<RawShellElement>,
 }
@@ -579,6 +582,7 @@ impl ShellSplit {
                     elements.push(RawShellElement::Stdout);
                 }
                 ">>" => {
+                    println!("Saw append");
                     elements.push(RawShellElement::StdoutAppend);
                 }
                 "2>" => {
@@ -699,7 +703,7 @@ fn get_subgraph(subcmd: &[RawShellElement]) -> Result<ShellGraph> {
             }
             RawShellElement::StdoutAppend => {
                 let current_node = graph.get_node(id).unwrap();
-                current_node.push(RawShellElement::Stdout);
+                current_node.push(RawShellElement::StdoutAppend);
             }
             RawShellElement::Stdout => {
                 let current_node = graph.get_node(id).unwrap();

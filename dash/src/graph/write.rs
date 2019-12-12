@@ -1,10 +1,10 @@
+use super::rapper::copy_wrapper as copy;
 use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{NodeId, ProgId};
-use std::fs::OpenOptions;
-use std::io::{copy, stderr, stdout};
+use std::io::{stderr, stdout};
 use std::slice::IterMut;
 use stream::{
     DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
@@ -184,10 +184,7 @@ impl Rapper for WriteNode {
                         let mut tcpstream = network_connections.remove(&netstream)?;
                         match output_stream {
                             DashStream::File(filestream) => {
-                                let mut file_handle = OpenOptions::new()
-                                    .write(true)
-                                    .create(true)
-                                    .open(filestream.get_name())?;
+                                let mut file_handle = filestream.open()?;
                                 copy(&mut tcpstream, &mut file_handle)?;
                             }
                             DashStream::Stdout => {
@@ -216,17 +213,15 @@ impl Rapper for WriteNode {
                             pipestream.get_output_type(),
                         );
                         let mut output_handle = pipes.remove(&handle_identifier)?;
+                        println!("Found output handle {:?}", handle_identifier);
 
                         match output_stream {
                             DashStream::File(filestream) => {
-                                let mut file_handle = OpenOptions::new()
-                                    .write(true)
-                                    .create(true)
-                                    .open(filestream.get_name())?;
                                 println!(
                                     "going to copy from {:?} into {:?}",
                                     pipestream, filestream
                                 );
+                                let mut file_handle = filestream.open()?;
                                 copy(&mut output_handle, &mut file_handle)?;
                             }
                             DashStream::Stdout => {

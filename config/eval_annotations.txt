@@ -11,5 +11,4 @@ pr: FLAGS:[(short:m,long:merge),(short:t)] OPTPARAMS:[(short:s,type:str,size:1)]
 head: OPTPARAMS:[(long:lines,short:n,size:1)]
 q: FLAGS:[(short:H)] OPTPARAMS:[(short:d,size:1,type:str)] PARAMS:[(type:str,size:1)]
 sort: OPTPARAMS:[(short:k,size:1,long:key,type:str),(short:t,size:1,type:str)] FLAGS:[(short:n),(short:r)]
-zannotate[long_arg_sVyingle_dash]: FLAGS:[(long:routing)] OPTPARAMS:[(long:routing-mrt-file,type:input_file,size:1),(long:input-file-type,type:str,size:1)]
-
+zannotate[long_arg_single_dash]: FLAGS:[(long:routing)] OPTPARAMS:[(long:routing-mrt-file,type:input_file,size:1),(long:input-file-type,type:str,size:1)]

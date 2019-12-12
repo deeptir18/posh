@@ -83,12 +83,12 @@ impl Interpreter {
     pub fn parse_cmd_graph(&mut self, command: &str) -> Result<Program> {
         // make a shell split from the command
         let shellsplit = shell_parse::ShellSplit::new(command)?;
-
         // turn shell split into shell graph
         let shellgraph = shellsplit.convert_into_shell_graph()?;
 
         // turn this into node graph that can be fed into the annotation layer to be executed
         let mut program = shellgraph.convert_into_program()?;
+        println!("prog: {:?}", program);
 
         // apply the parser
         self.apply_parser(&mut program)?;
@@ -288,7 +288,7 @@ impl Interpreter {
                 }
                 ArgType::InputFile | ArgType::OutputFile => {
                     // check where the file resolves to
-                    match self.filemap.find_match(&arg.0, &self.pwd) {
+                    match self.filemap.find_match_str(&arg.0, &self.pwd) {
                         // TODO: add in support for *multiple mounts* and the file being from a
                         Some(fileinfo) => {
                             let datastream = stream::DataStream::strip_prefix(

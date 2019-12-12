@@ -141,6 +141,7 @@ impl Default for ParsingOptions {
 }
 
 pub enum IndividualParseOption {
+    /// If the option should be parsed with -long.
     LongArgSingleDash,
 }
 

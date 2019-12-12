@@ -2,8 +2,28 @@ use super::program::NodeId;
 use super::stream;
 use super::Location;
 use super::Result;
+use failure::bail;
+use std::io::ErrorKind;
+use std::io::{copy, Read, Write};
 use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
 
+/// Dash wrapper for copy that catches pipe close errors.
+pub fn copy_wrapper<R: ?Sized, W: ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64>
+where
+    R: Read,
+    W: Write,
+{
+    match copy(reader, writer) {
+        Ok(s) => Ok(s),
+        Err(e) => match e.kind() {
+            ErrorKind::BrokenPipe => Ok(0),
+            ErrorKind::ConnectionAborted => Ok(0),
+            _ => {
+                bail!("{:?}", e);
+            }
+        },
+    }
+}
 /// Checks if this is a stream that represents a TCP connection that should be initiated by this
 /// nodeid.
 pub fn stream_initiate_filter(s: DashStream, node_id: NodeId, is_server: bool) -> bool {

@@ -3,9 +3,10 @@ use super::{Location, Result, SharedMap};
 use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::convert::Into;
+use std::fs::{canonicalize, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
@@ -205,6 +206,18 @@ impl FileStream {
         }
     }
 
+    pub fn open(&self) -> Result<File> {
+        let mut open_options = OpenOptions::new();
+        match self.mode {
+            FileMode::CREATE => open_options.write(true).create(true).read(true),
+            FileMode::READ => open_options.read(true),
+            FileMode::APPEND => open_options.write(true).append(true).read(true),
+            FileMode::REGULAR => open_options.read(true).write(true).create(true),
+        };
+        let file = open_options.open(self.name.clone())?;
+        Ok(file)
+    }
+
     pub fn new_exact(name: String, location: Location, mode: FileMode) -> Self {
         FileStream {
             location: location,
@@ -215,6 +228,49 @@ impl FileStream {
 
     pub fn set_name(&mut self, name: &str) {
         self.name = name.to_string();
+    }
+
+    /// Attempts to cannonicalize a filepath.
+    /// If the file does not exist, need to prepend the current directory to this path and then try
+    /// again to cannonicalize.
+    /// TODO: If that STILL doesn't work you have to do some more work.
+    pub fn dash_cannonicalize(&mut self, pwd: &PathBuf) -> Result<()> {
+        println!("trying to canonicalize: {:?}", self.name);
+        let name_clone = self.name.clone();
+        let path = Path::new(&name_clone);
+        if path.is_absolute() {
+            println!("path is absolute: {:?}", path);
+        }
+
+        // Then try to cannonicalize the file:
+        match canonicalize(&name_clone) {
+            Ok(pathbuf) => {
+                println!("was able to canonicalize: {:?}", self.name);
+                // change name to be this full path name
+                match pathbuf.to_str() {
+                    Some(p) => self.name = p.to_string(),
+                    None => {
+                        bail!("Couldn't convert: {:?} to string", pathbuf);
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+
+        // prepend the pwd and then try to cannonicalize
+        // if there are "." or ".." in the relative paths this might not work
+        // Which is no good especially for the git case right?
+        // We can explicitly address this as a concern in the implementation.
+
+        let new_relative_path = pwd.clone().as_path().join(path);
+        println!("res: {:?}", new_relative_path);
+        match new_relative_path.to_path_buf().to_str() {
+            Some(p) => self.name = p.to_string(),
+            None => {
+                bail!("Couldn't convert: {:?} to string", new_relative_path);
+            }
+        }
+        Ok(())
     }
 
     pub fn set_mode(&mut self, mode: FileMode) {
@@ -247,6 +303,7 @@ impl FileStream {
     }
 
     pub fn strip_prefix(&mut self, prefix: &str) -> Result<()> {
+        println!("trying to strip prefix: {:?} from {:?}", prefix, self.name);
         let mut path = Path::new(&self.name);
         path = path.strip_prefix(prefix)?;
         let loc = match path.to_str() {
