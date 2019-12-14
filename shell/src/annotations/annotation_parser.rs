@@ -437,9 +437,17 @@ named_complete!(
         |_| IndividualParseOption::LongArgSingleDash
     })
 );
+
+named_complete!(
+    parse_splittable_across_input<IndividualParseOption>,
+    map!(tag!("splittable_across_input"), {
+        |_| IndividualParseOption::SplittableAcrossInput
+    })
+);
+
 named_complete!(
     parse_individual_parsing_option<IndividualParseOption>,
-    alt!(parse_long_arg_single_dash)
+    alt!(parse_long_arg_single_dash | parse_splittable_across_input)
 );
 named_complete!(
     parse_parsing_options<Result<ParsingOptions>>,
@@ -454,11 +462,15 @@ named_complete!(
         |vec_options: Vec<IndividualParseOption>| {
             let mut parsing_opt = ParsingOptions {
                 long_arg_single_dash: false,
+                splittable_across_input: false,
             };
             for opt in vec_options.iter() {
                 match opt {
                     IndividualParseOption::LongArgSingleDash => {
                         parsing_opt.long_arg_single_dash = true
+                    }
+                    IndividualParseOption::SplittableAcrossInput => {
+                        parsing_opt.splittable_across_input = true
                     }
                 }
             }

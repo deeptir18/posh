@@ -106,6 +106,8 @@ pub struct Param {
     pub size: ParamSize,     // doesn't need to be a specific number, list 0, 1 or List
     pub default_value: String,
     pub multiple: bool,
+    /// Is this parameter splittable, while keeping the other arguments the same?
+    pub splittable: bool,
 }
 
 /// All the possible things provided in the annotation.
@@ -119,6 +121,7 @@ pub enum Info {
     Long(String),
     Desc(String), // I really should remove this one it's just clutter
     Multiple,     // allow multiple occurrences or not
+    Splittable,   // If this command is splittable
 }
 
 pub enum SizeInfo {
@@ -130,12 +133,15 @@ pub enum SizeInfo {
 pub struct ParsingOptions {
     /// Option to configure that long options can be parsed with a single dash.
     pub long_arg_single_dash: bool,
+    /// If this command can be split across a specific standard in stream.
+    pub splittable_across_input: bool,
 }
 
 impl Default for ParsingOptions {
     fn default() -> Self {
         ParsingOptions {
-            long_arg_single_dash: true,
+            long_arg_single_dash: false,
+            splittable_across_input: false,
         }
     }
 }
@@ -143,6 +149,8 @@ impl Default for ParsingOptions {
 pub enum IndividualParseOption {
     /// If the option should be parsed with -long.
     LongArgSingleDash,
+    /// If the command is splittable across input
+    SplittableAcrossInput,
 }
 
 /// An annotation is a command name and a vector of args
