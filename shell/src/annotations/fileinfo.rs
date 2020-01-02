@@ -97,6 +97,16 @@ impl FileMap {
         None
     }
 
+    /// Check which mount the pwd resolves to, if any
+    pub fn find_current_dir_match(&self, pwd: &PathBuf) -> Option<(String, String)> {
+        for (mount, ip) in self.map.iter() {
+            if Path::new(pwd).starts_with(Path::new(mount)) {
+                return Some((mount.clone(), ip.clone()));
+            }
+        }
+        None
+    }
+
     /// Used to resolve any filestream arguments that might contain a pattern the resulting list of
     /// multiple files.
     /// TODO: This *only* resolves the pattern with local or absolute paths -- so to do this

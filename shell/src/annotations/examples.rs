@@ -3,7 +3,7 @@ use super::grammar::*;
 use super::interpreter::Interpreter;
 use super::parser::Parser;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 fn get_test_filemap() -> FileMap {
     let mut map: HashMap<String, String> = HashMap::default();
     map.insert("/b/a".to_string(), "125.0.0.1".to_string());
@@ -12,6 +12,24 @@ fn get_test_filemap() -> FileMap {
     map.insert("/e/d/".to_string(), "128.0.0.1".to_string());
     map.insert("/f/e".to_string(), "129.0.0.1".to_string());
     FileMap::construct(map)
+}
+
+fn get_git_clone_parser() -> Parser {
+    let mut parser = Parser::new("git clone");
+    let annotation = "git clone: PARAMS:[(type:str,size:1),(type:output_file,size:1)]";
+    parser
+        .add_annotation(Command::new(annotation).unwrap())
+        .unwrap();
+    parser
+}
+
+fn get_git_commit_parser() -> Parser {
+    let mut parser = Parser::new("git commit");
+    let annotation = "git commit[needs_current_dir]: OPTPARAMS:[(type:str,short:m,size:1)]";
+    parser
+        .add_annotation(Command::new(annotation).unwrap())
+        .unwrap();
+    parser
 }
 
 // "tar: FLAGS:[(short:o,long:option,desc:(foo foo)),(short:d,long:debug,desc:(debug mode))] OPTPARAMS:[(short:d,long:directory,type:input_file,size:1,default_value:\".\"),(short:p,long:parent,desc:(parent dir),type:str,size:1,default_value:\"..\"),]"
@@ -162,6 +180,8 @@ fn get_test_parser() -> HashMap<String, Parser> {
     parsers.insert("sort".to_string(), get_sort_parser());
     parsers.insert("zannotate".to_string(), get_zannotate_parser());
     parsers.insert("wc".to_string(), get_wc_parser());
+    parsers.insert("git clone".to_string(), get_git_clone_parser());
+    parsers.insert("git commit".to_string(), get_git_commit_parser());
     parsers
 }
 
@@ -169,6 +189,6 @@ pub fn get_test_interpreter() -> Interpreter {
     Interpreter {
         parsers: get_test_parser(),
         filemap: get_test_filemap(),
-        pwd: PathBuf::new(),
+        pwd: Path::new("/d/c/folder").to_path_buf(),
     }
 }

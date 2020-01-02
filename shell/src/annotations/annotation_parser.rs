@@ -169,6 +169,20 @@ named_complete!(
     })
 );
 
+named_complete!(
+    parse_command_name<String>,
+    map!(many1!(alt!(alpha1 | tag!(" ") | tag!("-"))), |elts: Vec<
+        CompleteByteSlice,
+    >| {
+        let mut name = "".to_string();
+        for elt in elts.iter() {
+            let str_repr = str::from_utf8(elt.0).unwrap();
+            name.push_str(str_repr);
+        }
+        name
+    })
+);
+
 // TODO: need to include dashes here somehow
 named_complete!(
     parse_long<Info>,
@@ -465,8 +479,20 @@ named_complete!(
 );
 
 named_complete!(
+    parse_needs_current_dir<IndividualParseOption>,
+    map!(tag!("needs_current_dir"), {
+        |_| IndividualParseOption::NeedsCurrentDir
+    })
+);
+
+named_complete!(
     parse_individual_parsing_option<IndividualParseOption>,
-    alt!(parse_long_arg_single_dash | parse_splittable_across_input | parse_reduces_input)
+    alt!(
+        parse_long_arg_single_dash
+            | parse_splittable_across_input
+            | parse_reduces_input
+            | parse_needs_current_dir
+    )
 );
 named_complete!(
     parse_parsing_options<Result<ParsingOptions>>,
@@ -491,6 +517,9 @@ named_complete!(
                     IndividualParseOption::ReducesInput => {
                         parsing_opt.reduces_input = true;
                     }
+                    IndividualParseOption::NeedsCurrentDir => {
+                        parsing_opt.needs_current_dir = true;
+                    }
                 }
             }
             Ok(parsing_opt)
@@ -505,7 +534,7 @@ named_complete!(
     parse_annotation<Result<Command>>,
     map!(
         do_parse!(
-            name: alpha1
+            name: parse_command_name
                 >> opt!(tag!("["))
                 >> parsing_options: parse_parsing_options
                 >> opt!(tag!("]"))
@@ -513,12 +542,11 @@ named_complete!(
                 >> arg_list: parse_arguments
                 >> (name, parsing_options, arg_list)
         ),
-        |(n, parsing_options, arg_list): (
-            CompleteByteSlice,
+        |(name, parsing_options, arg_list): (
+            String,
             Result<ParsingOptions>,
             Result<Vec<Argument>>
         )| {
-            let name = str::from_utf8(n.0).unwrap();
             let opts = match parsing_options {
                 Ok(o) => o,
                 Err(e) => {
@@ -532,7 +560,7 @@ named_complete!(
                 }
             };
             Ok(Command {
-                command_name: String::from(name),
+                command_name: name,
                 args: args,
                 parsing_options: opts,
             })
@@ -560,14 +588,6 @@ impl Command {
 
     pub fn long_arg_single_dash(&self) -> bool {
         self.parsing_options.long_arg_single_dash
-    }
-
-    pub fn splittable_across_input(&self) -> bool {
-        self.parsing_options.splittable_across_input
-    }
-
-    pub fn reduces_input(&self) -> bool {
-        self.parsing_options.reduces_input
     }
 
     /// Used for checking if an option passed into the program matches a long option.

@@ -57,29 +57,6 @@ impl Parser {
         }
     }
 
-    /// Checks whether the underlying command is parallelizable across input.
-    /// Returns true if ALL the underlying parsers are parallelizable.
-    /// TODO: should be specific to if this specific invocation is parallelizable, not all.
-    pub fn splittable_across_input(&self) -> bool {
-        for ann in self.annotations.iter() {
-            if !ann.splittable_across_input() {
-                return false;
-            } else {
-            }
-        }
-        return true;
-    }
-
-    pub fn reduces_input(&self) -> bool {
-        for ann in self.annotations.iter() {
-            if !ann.reduces_input() {
-                return false;
-            } else {
-            }
-        }
-        return true;
-    }
-
     /// Validates an annotation.
     /// Ensures:
     ///     - lone options have short or long specified
@@ -292,6 +269,34 @@ impl Parser {
         }
 
         let mut invocation_clone = invocation.clone();
+        // if the command name has more than 1 word --> need to remove words from the arglist
+        let parser_name_list: Vec<String> = self
+            .name
+            .clone()
+            .split(" ")
+            .map(|x| x.to_string())
+            .collect();
+        let num_args_to_pop = parser_name_list.len() - 1;
+        if num_args_to_pop > 0 {
+            if invocation_clone.len() < num_args_to_pop {
+                bail!(
+                    "Not enough arguments in invocation {:?} to fill the command name {:?}",
+                    invocation_clone,
+                    self.name
+                );
+            }
+            for i in 0..num_args_to_pop {
+                let popped = invocation_clone.remove(0);
+                if popped != parser_name_list[i + 1] {
+                    bail!(
+                        "Invocation {:?} does not match full command name {:?}",
+                        invocation,
+                        self.name
+                    );
+                }
+            }
+        }
+
         // now, if lone_args_single_dash turned on, deal with this
         // Note that ALL long args will be turned back into -dashes at the end of the parsing.
         if annotation.long_arg_single_dash() {
@@ -310,23 +315,31 @@ impl Parser {
             Ok(m) => m,
             Err(e) => bail!("Could not get matches: {:?}", e),
         };
-        self.assign_types(&mut matches, &annotation, annotation_map)
+        self.assign_types(parser_name_list, &mut matches, &annotation, annotation_map)
     }
 
     /// Given clap's argmatches of a command invocation,
     /// assign types based on the type map in the annotation.
     /// This does NOT decide execution location, just parses and assigns "types".
-    /// * invocation - Vec<String> - the particular invocation we are parsing.
+    /// * command_name - String - the actual command name might be more than word -- so need to
+    /// preserve this in the returned arguments so the command can be invoked correctly
     /// * matches - ArgMatches - the result of running clap over the original invocation
     /// * annotation - &grammar::Command - the annotation the parser matches were generated with
+    /// * annotation_map - HashMap<String, usize> - maps something to something
     ///
     fn assign_types(
         &self,
+        command_name: Vec<String>,
         matches: &mut ArgMatches,
         annotation: &grammar::Command,
         annotation_map: HashMap<String, usize>,
     ) -> Result<Vec<grammar::ParsedCommand>> {
         let mut ret: Vec<grammar::ParsedCommand> = Vec::new();
+        // basic parsed command containing the command name (with additional args if it's split)
+        let mut baseline_parsed_cmd = grammar::ParsedCommand::new(&command_name[0]);
+        for i in 1..command_name.len() {
+            baseline_parsed_cmd.add_arg((command_name[i].clone(), grammar::ArgType::Str));
+        }
         // find the splittable command, if it exists
         for arg in matches.args.iter() {
             let arg_info: &grammar::Argument =
@@ -338,15 +351,13 @@ impl Parser {
                         match param.size {
                             grammar::ParamSize::SpecificSize(size, _) => {
                                 for _i in 0..size {
-                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
-                                    ret.push(new_cmd);
+                                    ret.push(baseline_parsed_cmd.clone());
                                 }
                             }
                             grammar::ParamSize::List(_) => {
                                 let values = matches.values_of(arg.0.clone()).unwrap();
                                 for _i in 0..values.len() {
-                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
-                                    ret.push(new_cmd);
+                                    ret.push(baseline_parsed_cmd.clone());
                                 }
                             }
                             _ => {}
@@ -359,8 +370,7 @@ impl Parser {
                         match param.size {
                             grammar::ParamSize::SpecificSize(size, _) => {
                                 for _i in 0..size {
-                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
-                                    ret.push(new_cmd);
+                                    ret.push(baseline_parsed_cmd.clone());
                                 }
                             }
                             grammar::ParamSize::List(_) => {
@@ -377,8 +387,7 @@ impl Parser {
                                     }
                                 }
                                 for _i in 0..size {
-                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
-                                    ret.push(new_cmd);
+                                    ret.push(baseline_parsed_cmd.clone());
                                 }
                             }
                             _ => {}
@@ -390,8 +399,7 @@ impl Parser {
         }
         // if no splittable arg in the invocation, need to add 1 empty parsed command
         if ret.len() == 0 {
-            let new_cmd = grammar::ParsedCommand::new(&self.name);
-            ret.push(new_cmd);
+            ret.push(baseline_parsed_cmd.clone());
         }
 
         // TODO: matches.args.iter() might not be publicly available
@@ -527,100 +535,137 @@ impl Parser {
                 _ => {}
             }
         }
-        for arg in matches.args.iter() {
-            let arg_info: &grammar::Argument =
-                &annotation.args[annotation_map[arg.0.clone()] as usize];
-            match arg_info {
-                grammar::Argument::LoneParam(param) => {
-                    let values = matches.values_of(arg.0.clone()).unwrap();
-                    match param.size {
-                        grammar::ParamSize::Zero => {
-                            unreachable!();
-                        }
-                        grammar::ParamSize::One => {
-                            if param.splittable {
-                                assert!(values.len() == 1);
-                            }
-                            for parsed_cmd in ret.iter_mut() {
-                                values.clone().for_each(|val| {
-                                    parsed_cmd.add_arg((val.to_string(), param.param_type));
-                                });
-                            }
-                        }
-                        grammar::ParamSize::SpecificSize(_, sep)
-                        | grammar::ParamSize::List(sep) => {
-                            if param.splittable {
-                                // could be a wildcard
-                                let mut values_clone = values.clone();
-                                let mut real_vals: Vec<String> = Vec::new();
-                                if ret.len() != values_clone.len() {
-                                    for entry in glob(values_clone.next().unwrap())
-                                        .expect("Failed to read pattern")
-                                    {
-                                        match entry {
-                                            Ok(p) => {
-                                                let name = match p.to_str() {
-                                                    Some(n) => n.to_string(),
-                                                    None => bail!(
+
+        // basically ned to do an n^2 operation over matches =>
+        // for each lone param, iterate over matches to see if it occurs
+        // and then do the stuff
+        // now add in the lone arguments in the order that they come in the command
+        let mut count: u32 = 0;
+        for annotation_arg in annotation.args.iter() {
+            match annotation_arg {
+                grammar::Argument::LoneParam(_param) => {
+                    for arg in matches.args.iter() {
+                        if arg.0.clone() == count.to_string() {
+                            // then add the argument into the list
+                            let arg_info: &grammar::Argument =
+                                &annotation.args[annotation_map[arg.0.clone()] as usize];
+                            match arg_info {
+                                grammar::Argument::LoneParam(param) => {
+                                    let values = matches.values_of(arg.0.clone()).unwrap();
+                                    match param.size {
+                                        grammar::ParamSize::Zero => {
+                                            unreachable!();
+                                        }
+                                        grammar::ParamSize::One => {
+                                            if param.splittable {
+                                                assert!(values.len() == 1);
+                                            }
+                                            for parsed_cmd in ret.iter_mut() {
+                                                values.clone().for_each(|val| {
+                                                    parsed_cmd.add_arg((
+                                                        val.to_string(),
+                                                        param.param_type,
+                                                    ));
+                                                });
+                                            }
+                                        }
+                                        grammar::ParamSize::SpecificSize(_, sep)
+                                        | grammar::ParamSize::List(sep) => {
+                                            if param.splittable {
+                                                // could be a wildcard
+                                                let mut values_clone = values.clone();
+                                                let mut real_vals: Vec<String> = Vec::new();
+                                                if ret.len() != values_clone.len() {
+                                                    for entry in glob(values_clone.next().unwrap())
+                                                        .expect("Failed to read pattern")
+                                                    {
+                                                        match entry {
+                                                            Ok(p) => {
+                                                                let name = match p.to_str() {
+                                                                    Some(n) => n.to_string(),
+                                                                    None => bail!(
                                                         "Could not turn path: {:?} to string",
                                                         p
                                                     ),
-                                                };
-                                                real_vals.push(name.to_string());
+                                                                };
+                                                                real_vals.push(name.to_string());
+                                                            }
+                                                            Err(e) => {
+                                                                bail!(
+                                                                    "One of paths is error: {:?}",
+                                                                    e
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    for (i, parsed_cmd) in
+                                                        ret.iter_mut().enumerate()
+                                                    {
+                                                        let value = &real_vals[i];
+                                                        parsed_cmd.add_arg((
+                                                            value.clone(),
+                                                            param.param_type,
+                                                        ));
+                                                    }
+                                                } else {
+                                                    assert_eq!(ret.len(), values.len());
+                                                    // add into each cmd separately
+                                                    for (i, parsed_cmd) in
+                                                        ret.iter_mut().enumerate()
+                                                    {
+                                                        let value = values.clone().nth(i).unwrap();
+                                                        parsed_cmd.add_arg((
+                                                            value.to_string(),
+                                                            param.param_type,
+                                                        ));
+                                                    }
+                                                }
+                                            } else {
+                                                let mut assigned_type: grammar::ArgType =
+                                                    param.param_type;
+                                                if param.param_type == grammar::ArgType::InputFile
+                                                    && sep == grammar::ListSeparator::Comma
+                                                {
+                                                    assigned_type = grammar::ArgType::InputFileList;
+                                                }
+                                                if param.param_type == grammar::ArgType::OutputFile
+                                                    && sep == grammar::ListSeparator::Comma
+                                                {
+                                                    assigned_type =
+                                                        grammar::ArgType::OutputFileList;
+                                                }
+                                                match sep {
+                                                    grammar::ListSeparator::Space => {
+                                                        for parsed_cmd in ret.iter_mut() {
+                                                            values.clone().for_each(|val| {
+                                                                parsed_cmd.add_arg((
+                                                                    val.to_string(),
+                                                                    assigned_type,
+                                                                ));
+                                                            });
+                                                        }
+                                                    }
+                                                    grammar::ListSeparator::Comma => {
+                                                        for parsed_cmd in ret.iter_mut() {
+                                                            parsed_cmd.add_arg((
+                                                                join(values.clone(), ","),
+                                                                assigned_type,
+                                                            ));
+                                                        }
+                                                    }
+                                                }
                                             }
-                                            Err(e) => {
-                                                bail!("One of paths is error: {:?}", e);
-                                            }
-                                        }
-                                    }
-                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
-                                        let value = &real_vals[i];
-                                        parsed_cmd.add_arg((value.clone(), param.param_type));
-                                    }
-                                } else {
-                                    assert_eq!(ret.len(), values.len());
-                                    // add into each cmd separately
-                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
-                                        let value = values.clone().nth(i).unwrap();
-                                        parsed_cmd.add_arg((value.to_string(), param.param_type));
-                                    }
-                                }
-                            } else {
-                                let mut assigned_type: grammar::ArgType = param.param_type;
-                                if param.param_type == grammar::ArgType::InputFile
-                                    && sep == grammar::ListSeparator::Comma
-                                {
-                                    assigned_type = grammar::ArgType::InputFileList;
-                                }
-                                if param.param_type == grammar::ArgType::OutputFile
-                                    && sep == grammar::ListSeparator::Comma
-                                {
-                                    assigned_type = grammar::ArgType::OutputFileList;
-                                }
-                                match sep {
-                                    grammar::ListSeparator::Space => {
-                                        for parsed_cmd in ret.iter_mut() {
-                                            values.clone().for_each(|val| {
-                                                parsed_cmd
-                                                    .add_arg((val.to_string(), assigned_type));
-                                            });
-                                        }
-                                    }
-                                    grammar::ListSeparator::Comma => {
-                                        for parsed_cmd in ret.iter_mut() {
-                                            parsed_cmd.add_arg((
-                                                join(values.clone(), ","),
-                                                assigned_type,
-                                            ));
                                         }
                                     }
                                 }
+                                _ => {}
                             }
                         }
                     }
                 }
                 _ => {}
             }
+            count += 1;
         }
 
         Ok(ret)
@@ -633,11 +678,12 @@ impl Parser {
     pub fn parse_command(
         &mut self,
         invocation: Vec<String>,
-    ) -> Result<Vec<grammar::ParsedCommand>> {
+    ) -> Result<(Vec<grammar::ParsedCommand>, grammar::ParsingOptions)> {
         for i in 0..self.annotations.len() {
             match self.parse_invocation(&invocation, i) {
                 Ok(p) => {
-                    return Ok(p);
+                    let parsing_options = self.annotations[i].parsing_options.clone();
+                    return Ok((p, parsing_options));
                 }
                 Err(e) => {
                     if self.debug {
@@ -652,7 +698,7 @@ impl Parser {
         );
 
         let res = self.default_parse(invocation)?;
-        Ok(vec![res])
+        Ok((vec![res], grammar::ParsingOptions::default()))
     }
 
     fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {

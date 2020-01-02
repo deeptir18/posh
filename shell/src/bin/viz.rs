@@ -72,15 +72,31 @@ fn main() {
 
     run_viz(
         &dot_binary,
-        "cat /d/c/foo /b/a/foo /e/d/foo /f/e/foo | grep 'bar' > local.txt",
+        "cat /d/c/foo /b/a/foo /e/d/foo /f/e/foo | grep 'bar' > /local/local.txt",
         "distributed_cat",
         &output_folder,
         VizType::Shell,
     );
     run_viz(
         &dot_binary,
-        "cat /d/c/foo /b/a/foo /e/d/foo /f/e/foo | grep 'bar' > local.txt",
+        "cat /d/c/foo /b/a/foo /e/d/foo /f/e/foo | grep 'bar' > /local/local.txt",
         "distributed_cat",
+        &output_folder,
+        VizType::Dash,
+    );
+
+    run_viz(
+        &dot_binary,
+        "git clone https://github.com/deeptir18/dash /d/c/dash",
+        "git_clone",
+        &output_folder,
+        VizType::Dash,
+    );
+
+    run_viz(
+        &dot_binary,
+        "git commit -m \"fake commit message\"",
+        "git_commit",
         &output_folder,
         VizType::Dash,
     );

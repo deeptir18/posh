@@ -137,6 +137,8 @@ pub struct ParsingOptions {
     pub splittable_across_input: bool,
     /// If the command reduces the input size
     pub reduces_input: bool,
+    /// If the command implicitly relies on the current directory (e.g., many git commands)
+    pub needs_current_dir: bool,
 }
 
 impl Default for ParsingOptions {
@@ -145,6 +147,7 @@ impl Default for ParsingOptions {
             long_arg_single_dash: false,
             splittable_across_input: false,
             reduces_input: false,
+            needs_current_dir: false,
         }
     }
 }
@@ -156,6 +159,8 @@ pub enum IndividualParseOption {
     SplittableAcrossInput,
     /// If the command, as per this invocation, reduces the input size.
     ReducesInput,
+    /// Relies on the current dir (implicitly)
+    NeedsCurrentDir,
 }
 
 /// An annotation is a command name and a vector of args
@@ -171,7 +176,7 @@ pub struct Command {
 
 /// A ParsedCommand is a command name, with *specific* String arguments
 /// Each string argument is associated with a specific ArgType
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ParsedCommand {
     pub command_name: String,
     pub typed_args: Vec<(String, ArgType)>,

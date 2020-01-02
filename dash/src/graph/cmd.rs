@@ -42,6 +42,50 @@ pub struct CommandNode {
     location: Location,
     /// Resolved args, as strings.
     resolved_args: Vec<String>,
+    /// Extra information used for scheduling.
+    options: CmdExtraInfo,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
+pub struct CmdExtraInfo {
+    pub splittable_across_input: bool,
+    pub reduces_input: bool,
+    pub needs_current_dir: bool,
+}
+impl Default for CmdExtraInfo {
+    fn default() -> Self {
+        CmdExtraInfo {
+            splittable_across_input: false,
+            reduces_input: false,
+            needs_current_dir: false,
+        }
+    }
+}
+
+impl CmdExtraInfo {
+    pub fn get_splittable_across_input(&self) -> bool {
+        self.splittable_across_input
+    }
+
+    pub fn set_splittable_across_input(&mut self, val: bool) {
+        self.splittable_across_input = val;
+    }
+
+    pub fn get_reduces_input(&self) -> bool {
+        self.reduces_input
+    }
+
+    pub fn set_reduces_input(&mut self, val: bool) {
+        self.reduces_input = val;
+    }
+
+    pub fn get_needs_current_dir(&self) -> bool {
+        self.needs_current_dir
+    }
+
+    pub fn set_needs_current_dir(&mut self, val: bool) {
+        self.needs_current_dir = val;
+    }
 }
 
 impl Default for CommandNode {
@@ -56,11 +100,20 @@ impl Default for CommandNode {
             stderr: vec![],
             location: Default::default(),
             resolved_args: vec![],
+            options: Default::default(),
         }
     }
 }
 
 impl CommandNode {
+    pub fn get_options(&self) -> CmdExtraInfo {
+        self.options
+    }
+
+    pub fn set_options(&mut self, options: CmdExtraInfo) {
+        self.options = options;
+    }
+
     pub fn clear_stdin(&mut self) {
         self.stdin.clear();
     }

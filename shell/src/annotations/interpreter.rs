@@ -23,6 +23,7 @@ use std::env;
 use std::f64;
 use std::iter::FromIterator;
 use std::path::PathBuf;
+
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
     pub filemap: FileMap,
@@ -108,33 +109,6 @@ impl Interpreter {
         Ok(program)
     }
 
-    pub fn check_cmd_splittable(&self, cmd_name: &str) -> bool {
-        for (name, parser) in self.parsers.iter() {
-            if cmd_name == name {
-                if parser.splittable_across_input() {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    // TODO: Whether a cmd reduces input is a PER parser attribute.
-    // Need to distinguish which individual parser this invocation comes from and determine the
-    // extra attributes there.
-    // Have the place that generates typed args give up the parser ID and keep track to later query
-    // for this type of information.
-    pub fn check_cmd_reduces_input(&self, cmd_name: &str) -> bool {
-        for (name, parser) in self.parsers.iter() {
-            if cmd_name == name {
-                if parser.reduces_input() {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
     pub fn parallelize_cmd_nodes(&mut self, program: &mut Program) -> Result<()> {
         // iterate through nodes, and if any are splittable across input, update to replace the
         // relevant edges and streams and nodes
@@ -142,7 +116,7 @@ impl Interpreter {
         for (id, node) in program.get_nodes_iter() {
             match node.get_elem() {
                 Elem::Cmd(cmdnode) => {
-                    if self.check_cmd_splittable(&cmdnode.get_name()) {
+                    if cmdnode.get_options().get_splittable_across_input() {
                         nodes_to_split.push(*id);
                     }
                 }
@@ -246,6 +220,45 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Finds the correct parser key given the command node.
+    /// This is usually simple (e.g. the get_name() function from the command),
+    /// but since some commands like 'git clone' are two separated work, parser needs to check both
+    /// the get_name() as well as the first n-1 string arguments
+    fn find_parser_key(&self, command_node: &CommandNode) -> Option<String> {
+        for (parser_name, _) in self.parsers.iter() {
+            let name_list: Vec<String> = parser_name
+                .clone()
+                .split(" ")
+                .map(|x| x.to_string())
+                .collect();
+            if name_list.len() == 1 {
+                if command_node.get_name() == name_list[0] {
+                    return Some(name_list[0].clone());
+                } else {
+                    continue;
+                }
+            } else {
+                let num_args = name_list.len() - 1;
+                // now join a string with the command name and the first n string args
+                let mut command_name = command_node.get_name();
+                let args = command_node.get_string_args();
+                if args.len() < num_args {
+                    // this parser isn't going to work
+                    continue;
+                }
+                for i in 0..num_args {
+                    command_name.push_str(" ");
+                    command_name.push_str(args[i].as_str());
+                }
+                if command_name == *parser_name {
+                    return Some(command_name);
+                }
+            }
+        }
+
+        None
+    }
+
     pub fn apply_parser(&mut self, program: &mut Program) -> Result<()> {
         // some nodes will be replaced by a vec of nodes, because of parallelization
         // maintain a map of nodes to nodes to replace with
@@ -257,14 +270,28 @@ impl Interpreter {
                     continue;
                 }
                 // if a parser exists, try to parse the command into a parsed command
-                if self.parsers.contains_key(&command_node.get_name()) {
-                    let parser: &mut Parser =
-                        self.parsers.get_mut(&command_node.get_name()).unwrap();
-                    // use the parser to turn the String args into "types"
-                    let args = command_node.get_string_args();
-                    // creates a vec of parsed commands
-                    let typed_args = parser.parse_command(args)?;
-                    node_repl_map.push((*id, typed_args));
+                match self.find_parser_key(&command_node) {
+                    Some(parser_name) => {
+                        let parser: &mut Parser = self.parsers.get_mut(&parser_name).unwrap();
+                        // use the parser to turn the String args into "types"
+                        let args = command_node.get_string_args();
+                        // creates a vec of parsed commands
+                        let (typed_args, options) = parser.parse_command(args)?;
+                        // save the parsing options in the node itself, for later use
+                        let mut new_options = command_node.get_options();
+                        if options.splittable_across_input {
+                            new_options.set_splittable_across_input(true);
+                        }
+                        if options.reduces_input {
+                            new_options.set_reduces_input(true);
+                        }
+                        if options.needs_current_dir {
+                            new_options.set_needs_current_dir(true);
+                        }
+                        command_node.set_options(new_options);
+                        node_repl_map.push((*id, typed_args));
+                    }
+                    None => {}
                 }
             }
         }
@@ -301,7 +328,7 @@ impl Interpreter {
                 // use the parser to turn the String args into "types"
                 let mut typed_args = parser.parse_command(args)?;
                 // interpret typed arguments and add them to the op
-                self.interpret_types(typed_args.pop().unwrap(), &mut op)?;
+                self.interpret_types(typed_args.0.pop().unwrap(), &mut op)?;
             } else {
                 for arg in args {
                     op.add_arg(node::OpArg::Arg(arg));
@@ -467,16 +494,14 @@ impl Interpreter {
                 // node reduces input or not
                 let last_node = prog.get_node(last_id).unwrap();
                 let reduces_input = match last_node.get_elem() {
-                    Elem::Cmd(cmdnode) => {
-                        let cmd_name = cmdnode.get_name();
-                        self.check_cmd_reduces_input(&cmd_name)
-                    }
+                    Elem::Cmd(cmdnode) => cmdnode.get_options().get_reduces_input(),
                     Elem::Read(_readnode) => false,
                     Elem::Write(_writenode) => {
                         // writenode is always a sink, never left side of an edge
                         unreachable!();
                     }
                 };
+
                 if reduces_input {
                     current_weight = current_weight / 2 as f64;
                 }
@@ -602,7 +627,18 @@ impl Interpreter {
                             cmdnode.set_loc(loc);
                             assigned.insert(*id);
                         }
-                        None => {}
+                        None => {
+                            // if this cmdnode implicitly relies on the current dir, assign it
+                            if cmdnode.get_options().get_needs_current_dir() {
+                                // check what mount the current dir is in
+                                match self.filemap.find_current_dir_match(&self.pwd) {
+                                    Some((_, ip)) => {
+                                        cmdnode.set_loc(Location::Server(ip));
+                                    }
+                                    None => {}
+                                }
+                            }
+                        }
                     }
                 }
             }
