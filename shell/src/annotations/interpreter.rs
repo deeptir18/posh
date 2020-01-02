@@ -15,13 +15,13 @@ use dash::graph;
 use dash::graph::{cmd, program, rapper, Location};
 use failure::bail;
 use graph::stream::{DashStream, FileStream};
-use program::{Elem, NodeId, Program};
+use program::{Elem, Node, NodeId, Program};
 use rapper::Rapper;
 use std::collections::{HashMap, HashSet};
+use std::convert::Into;
 use std::env;
 use std::iter::FromIterator;
 use std::path::PathBuf;
-
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
     pub filemap: FileMap,
@@ -91,13 +91,14 @@ impl Interpreter {
         println!("prog: {:?}", program);
 
         // apply the parser
+        // note: involves interpreting * for JUST parallelizable arguments
         self.apply_parser(&mut program)?;
 
         // in case any arguments correspond to environment vars -> resolve them
         self.resolve_env_vars(&mut program)?;
 
-        // later: for all *cmd* nodes -- apply any graph substitutions to generate a parallel
-        // version of the same command
+        // later: for all *cmd* nodes -- apply any graph substitutions to generate a parallel, if it is parallelizable
+        self.parallelize_cmd_nodes(&mut program)?;
 
         // for all FILESTREAMS -- try to apply the mount info to figure out if the file is remote
         // This also resolves environment vars for files & *patterns
@@ -105,6 +106,39 @@ impl Interpreter {
         // apply location algorithm
         self.assign_program_location(&mut program)?;
         Ok(program)
+    }
+
+    pub fn check_cmd_splittable(&self, cmd_name: &str) -> bool {
+        for (name, parser) in self.parsers.iter() {
+            if cmd_name == name {
+                if parser.splittable_across_input() {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    pub fn parallelize_cmd_nodes(&mut self, program: &mut Program) -> Result<()> {
+        // iterate through nodes, and if any are splittable across input, update to replace the
+        // relevant edges and streams and nodes
+        let mut nodes_to_split: Vec<NodeId> = Vec::new();
+        for (id, node) in program.get_nodes_iter() {
+            match node.get_elem() {
+                Elem::Cmd(cmdnode) => {
+                    if self.check_cmd_splittable(&cmdnode.get_name()) {
+                        nodes_to_split.push(*id);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // for nodes to split, split across the stdin
+        for node in nodes_to_split.iter() {
+            program.split_across_input(*node)?;
+        }
+        Ok(())
     }
 
     pub fn resolve_env_vars(&mut self, program: &mut Program) -> Result<()> {
@@ -154,19 +188,25 @@ impl Interpreter {
                                 new_args.push(NodeArg::Str(val.to_string()));
                             }
                             NodeArg::Stream(ref mut fs) => {
+                                println!("---");
+                                println!("Handling resolution of: {:?}", fs);
                                 // first, split into multiple filestreams if there are any patterns
                                 let mut replacements =
                                     self.filemap.resolve_filestream_with_pattern(fs)?;
+                                println!("Replacements: {:?}", replacements);
                                 // then, apply resolution
                                 for fs in replacements.iter_mut() {
                                     self.filemap.resolve_filestream(fs, &self.pwd)?;
+                                    println!("Fs after resolution: {:?}", fs);
                                 }
                                 for fs in replacements.into_iter() {
                                     new_args.push(NodeArg::Stream(fs));
                                 }
+                                println!("---");
                             }
                         }
                     }
+                    println!("new args: {:?}", new_args);
                     command_node.set_args(new_args);
                 }
                 Elem::Write(ref mut write_node) => {
@@ -197,9 +237,10 @@ impl Interpreter {
     }
 
     pub fn apply_parser(&mut self, program: &mut Program) -> Result<()> {
-        // for each individual node, if it is a *cmd* node, apply the parser
-        // TODO: figure out if this actually applies the parser :)
-        for (_, node) in program.get_mut_nodes_iter() {
+        // some nodes will be replaced by a vec of nodes, because of parallelization
+        // maintain a map of nodes to nodes to replace with
+        let mut node_repl_map: Vec<(NodeId, Vec<ParsedCommand>)> = Vec::new();
+        for (id, node) in program.get_mut_nodes_iter() {
             let elem = node.get_mut_elem();
             if let Elem::Cmd(ref mut command_node) = elem {
                 if command_node.args_len() == 0 {
@@ -211,11 +252,27 @@ impl Interpreter {
                         self.parsers.get_mut(&command_node.get_name()).unwrap();
                     // use the parser to turn the String args into "types"
                     let args = command_node.get_string_args();
+                    // creates a vec of parsed commands
                     let typed_args = parser.parse_command(args)?;
-                    // interpret typed arguments and add them to the op
-                    self.interpret_cmd_types(typed_args, command_node)?;
+                    node_repl_map.push((*id, typed_args));
                 }
             }
+        }
+
+        for (id, parsed_cmds) in node_repl_map.iter() {
+            println!("{:?}: {:?}", id, parsed_cmds);
+        }
+        // iterate through node replacement map,
+        // generate new command nodes to replace
+        for (id, parsed_commands) in node_repl_map.into_iter() {
+            let node = program.get_node(id).unwrap();
+
+            let new_command_nodes = self.interpret_cmd_types(parsed_commands, node)?;
+            for node in new_command_nodes.iter() {
+                println!("replacement node: {:?}", node);
+                println!("-------");
+            }
+            program.replace_node(id, new_command_nodes)?;
         }
         Ok(())
     }
@@ -239,9 +296,9 @@ impl Interpreter {
                 let parser: &mut Parser = self.parsers.get_mut(&op.name).unwrap();
 
                 // use the parser to turn the String args into "types"
-                let typed_args = parser.parse_command(args)?;
+                let mut typed_args = parser.parse_command(args)?;
                 // interpret typed arguments and add them to the op
-                self.interpret_types(typed_args, &mut op)?;
+                self.interpret_types(typed_args.pop().unwrap(), &mut op)?;
             } else {
                 for arg in args {
                     op.add_arg(node::OpArg::Arg(arg));
@@ -257,25 +314,32 @@ impl Interpreter {
         Ok(program)
     }
 
-    fn interpret_cmd_types(&mut self, cmd: ParsedCommand, command: &mut CommandNode) -> Result<()> {
+    fn interpret_cmd_types(&mut self, cmds: Vec<ParsedCommand>, node: Node) -> Result<Vec<Elem>> {
+        let mut ret: Vec<Elem> = Vec::new();
+        let command_opt: Option<CommandNode> = node.get_elem().into();
+        let mut command = command_opt.unwrap();
         command.clear_args();
-        for arg in cmd.typed_args.iter() {
-            match arg.1 {
-                ArgType::Str => {
-                    command.add_arg(NodeArg::Str(arg.0.clone()));
-                }
-                ArgType::InputFile | ArgType::OutputFile => {
-                    command.add_arg(NodeArg::Stream(FileStream::new(
-                        &arg.0.clone(),
-                        Location::Client,
-                    )));
-                }
-                ArgType::InputFileList | ArgType::OutputFileList => {
-                    unimplemented!();
+        for cmd in cmds.iter() {
+            let mut new_node = command.clone();
+            for arg in cmd.typed_args.iter() {
+                match arg.1 {
+                    ArgType::Str => {
+                        new_node.add_arg(NodeArg::Str(arg.0.clone()));
+                    }
+                    ArgType::InputFile | ArgType::OutputFile => {
+                        new_node.add_arg(NodeArg::Stream(FileStream::new(
+                            &arg.0.clone(),
+                            Location::Client,
+                        )));
+                    }
+                    ArgType::InputFileList | ArgType::OutputFileList => {
+                        unimplemented!();
+                    }
                 }
             }
+            ret.push(Elem::Cmd(new_node));
         }
-        Ok(())
+        Ok(ret)
     }
 
     /// TODO: OLD FUNCTION

@@ -121,7 +121,7 @@ pub enum Info {
     Long(String),
     Desc(String), // I really should remove this one it's just clutter
     Multiple,     // allow multiple occurrences or not
-    Splittable,   // If this command is splittable
+    Splittable,   // If this argument is splittable
 }
 
 pub enum SizeInfo {
@@ -135,6 +135,8 @@ pub struct ParsingOptions {
     pub long_arg_single_dash: bool,
     /// If this command can be split across a specific standard in stream.
     pub splittable_across_input: bool,
+    /// If the command reduces the input size
+    pub reduces_input: bool,
 }
 
 impl Default for ParsingOptions {
@@ -142,6 +144,7 @@ impl Default for ParsingOptions {
         ParsingOptions {
             long_arg_single_dash: false,
             splittable_across_input: false,
+            reduces_input: false,
         }
     }
 }
@@ -151,6 +154,8 @@ pub enum IndividualParseOption {
     LongArgSingleDash,
     /// If the command is splittable across input
     SplittableAcrossInput,
+    /// If the command, as per this invocation, reduces the input size.
+    ReducesInput,
 }
 
 /// An annotation is a command name and a vector of args
@@ -175,6 +180,24 @@ pub struct ParsedCommand {
 impl ParsedCommand {
     pub fn contains(&self, arg: (String, ArgType)) -> bool {
         self.typed_args.iter().any(|v| v == &arg)
+    }
+
+    pub fn new(name: &str) -> Self {
+        ParsedCommand {
+            command_name: name.to_string(),
+            typed_args: Vec::new(),
+        }
+    }
+
+    pub fn add_arg(&mut self, arg: (String, ArgType)) {
+        self.typed_args.push(arg)
+    }
+
+    pub fn get(&mut self, ind: usize) -> Option<(String, ArgType)> {
+        if ind >= self.typed_args.len() {
+            return None;
+        }
+        Some(self.typed_args.get(ind).unwrap().clone())
     }
 }
 

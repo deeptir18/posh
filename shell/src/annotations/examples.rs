@@ -6,14 +6,18 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 fn get_test_filemap() -> FileMap {
     let mut map: HashMap<String, String> = HashMap::default();
+    map.insert("/b/a".to_string(), "125.0.0.1".to_string());
+    map.insert("/c/b".to_string(), "126.0.0.1".to_string());
     map.insert("/d/c/".to_string(), "127.0.0.1".to_string());
+    map.insert("/e/d/".to_string(), "128.0.0.1".to_string());
+    map.insert("/f/e".to_string(), "129.0.0.1".to_string());
     FileMap::construct(map)
 }
 
 // "tar: FLAGS:[(short:o,long:option,desc:(foo foo)),(short:d,long:debug,desc:(debug mode))] OPTPARAMS:[(short:d,long:directory,type:input_file,size:1,default_value:\".\"),(short:p,long:parent,desc:(parent dir),type:str,size:1,default_value:\"..\"),]"
 fn get_cat_parser() -> Parser {
     let mut parser = Parser::new("cat");
-    let annotation = "cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]";
+    let annotation = "cat: PARAMS:[(type:input_file,splittable,size:list(list_separator:( ))),]";
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();
@@ -35,8 +39,8 @@ fn get_grep_parser() -> Parser {
     // supplied first
     // TODO: is this a big deal?
     let annotation =
-        "grep: FLAGS:[(short:v,long:invert-match)] PARAMS:[(type:str,size:1),(type:input_file,size:list(list_separator:( )))]";
-    let annotation1 = "grep: FLAGS:[(short:v,long:invert-match)] OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
+        "grep[splittable_across_input]: FLAGS:[(short:v,long:invert-match)] PARAMS:[(type:str,size:1),(type:input_file,size:list(list_separator:( )))]";
+    let annotation1 = "grep[splittable_across_input]: FLAGS:[(short:v,long:invert-match)] OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();

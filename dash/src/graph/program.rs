@@ -22,7 +22,23 @@ pub enum Elem {
     Cmd(cmd::CommandNode),
 }
 
+impl Into<Option<cmd::CommandNode>> for Elem {
+    fn into(self) -> Option<cmd::CommandNode> {
+        match self {
+            Elem::Cmd(cmd) => Some(cmd),
+            _ => None,
+        }
+    }
+}
+
 impl Rapper for Elem {
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        match self {
+            Elem::Write(write_node) => write_node.replace_stream_edges(edge, new_edges),
+            Elem::Read(read_node) => read_node.replace_stream_edges(edge, new_edges),
+            Elem::Cmd(cmd_node) => cmd_node.replace_stream_edges(edge, new_edges),
+        }
+    }
     fn set_id(&mut self, id: NodeId) {
         match self {
             Elem::Write(write_node) => write_node.set_id(id),
@@ -349,6 +365,19 @@ impl Node {
     ) -> Result<()> {
         self.elem.replace_pipe_with_net(pipe, net, iotype)
     }
+
+    pub fn clear_stdin(&mut self) {
+        match self.elem {
+            Elem::Cmd(ref mut cmdnode) => {
+                cmdnode.clear_stdin();
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        self.elem.replace_stream_edges(edge, new_edges)
+    }
 }
 
 /// One sided edges in the program graph
@@ -547,6 +576,13 @@ impl Program {
         self.id
     }
 
+    pub fn get_node(&self, id: NodeId) -> Option<Node> {
+        match self.nodes.get(&id) {
+            None => None,
+            Some(node) => Some(node.clone()),
+        }
+    }
+
     pub fn get_mut_node(&mut self, id: NodeId) -> Option<&mut Node> {
         self.nodes.get_mut(&id)
     }
@@ -564,6 +600,320 @@ impl Program {
 
     pub fn contains(&self, id: NodeId) -> bool {
         self.nodes.contains_key(&id)
+    }
+
+    /// Splits a node across its input streams.
+    pub fn split_across_input(&mut self, id: NodeId) -> Result<()> {
+        // find the node
+        let node = match self.get_node(id) {
+            Some(n) => n,
+            None => bail!(
+                "Could not find node id: {:?}, where we are calling split_across_input",
+                id
+            ),
+        };
+        let stdin = node.get_stdin();
+        // if there is nothing to parallelize across, don't do anything
+        if stdin.len() <= 1 {
+            return Ok(());
+        } else {
+        }
+
+        // create new nodes
+        let mut new_node_ids: Vec<NodeId> = Vec::new();
+        for _i in 0..stdin.len() {
+            let mut new_elem = node.get_elem();
+            match new_elem {
+                Elem::Cmd(ref mut cmdnode) => {
+                    cmdnode.clear_stdin();
+                    cmdnode.clear_stdout();
+                    cmdnode.clear_stderr();
+                    new_node_ids.push(self.add_elem(new_elem));
+                }
+                _ => {
+                    bail!("Shouldn't be trying to split a non-cmd node");
+                }
+            }
+        }
+        // fix the LEFT side
+        // replace all stdin edges/streams to point to new individual nodes
+        let mut streams = node.get_stdout();
+        let mut stderr = node.get_stderr();
+        let mut edges_to_remove: Vec<Link> = Vec::new();
+        let mut edges_to_add: Vec<Link> = Vec::new();
+
+        for (i, stream) in node.get_stdin().iter().enumerate() {
+            // add a new node for this input stream
+            match stream {
+                DashStream::Pipe(pipestream) => {
+                    assert!(id == pipestream.get_right());
+                    let old_edge = Link {
+                        left: pipestream.get_left(),
+                        right: id,
+                    };
+                    let new_edge = Link {
+                        left: pipestream.get_left(),
+                        right: new_node_ids[i],
+                    };
+                    edges_to_remove.push(old_edge.clone());
+                    edges_to_add.push(new_edge.clone());
+                    let mut new_pipestream = pipestream.clone();
+                    new_pipestream.set_right(new_node_ids[i]);
+                    // find the left side node and replace the corresponding pipestream
+                    {
+                        let left_node = match self.nodes.get_mut(&pipestream.get_left()) {
+                            Some(n) => n,
+                            None => bail!("Pipestream does not have a left node that exists"),
+                        };
+                        left_node.replace_stream_edges(old_edge, vec![new_edge])?;
+                    }
+                    {
+                        let new_node = self.nodes.get_mut(&new_node_ids[i]).unwrap();
+                        new_node.add_stdin(DashStream::Pipe(new_pipestream))?;
+                    }
+                }
+                DashStream::Tcp(netstream) => {
+                    assert!(id == netstream.get_right());
+                    let old_edge = Link {
+                        left: netstream.get_left(),
+                        right: id,
+                    };
+                    let new_edge = Link {
+                        left: netstream.get_right(),
+                        right: new_node_ids[i],
+                    };
+                    edges_to_remove.push(old_edge.clone());
+                    edges_to_add.push(new_edge.clone());
+                    let mut new_netstream = netstream.clone();
+                    new_netstream.set_right(new_node_ids[i]);
+                    {
+                        let left_node = match self.nodes.get_mut(&netstream.get_left()) {
+                            Some(n) => n,
+                            None => bail!("Netstream has a left node that doesn't exist in map"),
+                        };
+                        left_node.replace_stream_edges(old_edge, vec![new_edge])?;
+                    }
+
+                    {
+                        let right_node = self.nodes.get_mut(&new_node_ids[i]).unwrap();
+                        right_node.add_stdin(DashStream::Tcp(new_netstream))?;
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+
+        // fix the right side.
+        // Iterate over the stdout and stderr streams, and
+        // change the right side node as well as the new left nodes
+        streams.append(&mut stderr);
+        for stream in streams.iter() {
+            match stream {
+                DashStream::Pipe(pipestream) => {
+                    assert!(pipestream.get_left() == id);
+                    let old_edge = Link {
+                        left: id,
+                        right: pipestream.get_right(),
+                    };
+                    let new_edges: Vec<Link> = new_node_ids
+                        .clone()
+                        .iter()
+                        .map(|x| Link {
+                            left: *x,
+                            right: pipestream.get_right(),
+                        })
+                        .collect();
+                    edges_to_remove.push(old_edge.clone());
+                    edges_to_add.append(&mut new_edges.clone());
+                    {
+                        let right_node = match self.nodes.get_mut(&pipestream.get_right()) {
+                            Some(n) => n,
+                            None => bail!("Netstream has right node that doesn't exist"),
+                        };
+                        right_node.replace_stream_edges(old_edge.clone(), new_edges.clone())?;
+                    }
+                    for node_id in new_node_ids.iter() {
+                        let mut new_pipestream = pipestream.clone();
+                        new_pipestream.set_left(*node_id);
+                        let left_node = self.nodes.get_mut(node_id).unwrap();
+                        match pipestream.get_output_type() {
+                            IOType::Stdout => {
+                                left_node.add_stdout(DashStream::Pipe(new_pipestream))?;
+                            }
+                            IOType::Stderr => {
+                                left_node.add_stderr(DashStream::Pipe(new_pipestream))?;
+                            }
+                            _ => {
+                                unreachable!();
+                            }
+                        }
+                    }
+                }
+                DashStream::Tcp(netstream) => {
+                    let old_edge = Link {
+                        left: id,
+                        right: netstream.get_right(),
+                    };
+                    let new_edges: Vec<Link> = new_node_ids
+                        .clone()
+                        .iter()
+                        .map(|x| Link {
+                            left: *x,
+                            right: netstream.get_right(),
+                        })
+                        .collect();
+                    edges_to_remove.push(old_edge.clone());
+                    edges_to_add.append(&mut new_edges.clone());
+                    {
+                        let right_node = match self.nodes.get_mut(&netstream.get_right()) {
+                            Some(n) => n,
+                            None => bail!("Netstream has right node that doesn't exist"),
+                        };
+                        right_node.replace_stream_edges(old_edge.clone(), new_edges.clone())?;
+                    }
+                    for node_id in new_node_ids.iter() {
+                        let mut new_netstream = netstream.clone();
+                        new_netstream.set_left(*node_id);
+                        let left_node = self.nodes.get_mut(node_id).unwrap();
+                        match netstream.get_output_type() {
+                            IOType::Stdout => {
+                                left_node.add_stdout(DashStream::Tcp(new_netstream))?;
+                            }
+                            IOType::Stderr => {
+                                left_node.add_stderr(DashStream::Tcp(new_netstream))?;
+                            }
+                            _ => {
+                                unreachable!();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+        }
+        // add and remove all the edges mentioned
+        self.edges.retain(|x| !edges_to_remove.contains(x));
+        for edge in edges_to_add.into_iter() {
+            self.add_unique_edge(edge.get_left(), edge.get_right());
+        }
+
+        // remove the original node
+        self.remove_node(id)?;
+
+        Ok(())
+    }
+
+    pub fn remove_node(&mut self, id: NodeId) -> Result<()> {
+        match self.nodes.remove(&id) {
+            Some(_) => {}
+            None => {
+                bail!("Node id: {:?} not found in graph to remove", id);
+            }
+        }
+        self.edges
+            .retain(|x| x.get_left() != id && x.get_right() != id);
+        if self.sink_nodes.contains(&id) {
+            self.sink_nodes.retain(|x| *x != id);
+        }
+        Ok(())
+    }
+
+    /// For parallelization, replaces nodes with other nodes
+    /// Also need to replace the corresponding pipestreams or netstreams
+    pub fn replace_node(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<()> {
+        // need to remove this node and replace any to and from edges
+        if !self.nodes.contains_key(&id) {
+            bail!("Id not in map");
+        }
+
+        // if the new nodes to replace with have length 1 -> just the arguments need to change
+        if nodes.len() == 1 {
+            let new_node = &nodes[0];
+            let node = self.get_mut_node(id).unwrap();
+            match node.get_mut_elem() {
+                Elem::Cmd(ref mut cmdnode) => {
+                    cmdnode.clear_args();
+                    let args = match new_node {
+                        Elem::Cmd(new_cmd_elem) => new_cmd_elem.get_args(),
+                        _ => unreachable!(),
+                    };
+                    cmdnode.clear_args();
+                    cmdnode.set_args(args);
+                }
+                Elem::Write(_) => {}
+                Elem::Read(_) => {}
+            }
+            return Ok(());
+        }
+
+        let mut new_ids: Vec<NodeId> = Vec::new();
+        for elem in nodes.into_iter() {
+            let id = self.add_elem(elem);
+            new_ids.push(id);
+        }
+
+        let mut edges_to_add: Vec<Link> = Vec::new();
+
+        for edge in self.edges.iter() {
+            if id == edge.get_left() || id == edge.get_right() {
+                // calculate all left and right side replacements
+                let mut replacements: Vec<Link> = new_ids
+                    .iter()
+                    .map(|&new_id| {
+                        if id == edge.get_left() {
+                            return Link {
+                                left: new_id,
+                                right: edge.get_right(),
+                            };
+                        } else {
+                            return Link {
+                                left: edge.get_left(),
+                                right: new_id,
+                            };
+                        }
+                    })
+                    .collect();
+                // modify the pipestreams in the new nodes
+                for new_edge in replacements.iter() {
+                    let mut new_id = new_edge.get_left();
+                    if id == new_edge.get_left() {
+                        new_id = new_edge.get_right();
+                    } else {
+                    }
+
+                    let node = self.nodes.get_mut(&new_id).unwrap();
+                    match node.get_mut_elem() {
+                        Elem::Cmd(ref mut command_node) => {
+                            command_node.replace_stream(edge, new_edge)?;
+                        }
+                        _ => {
+                            unreachable!();
+                        }
+                    }
+                }
+                // modify the pipestreams in the other side of the node
+                if id == edge.get_left() {
+                    let node = self.nodes.get_mut(&edge.get_right()).unwrap();
+                    node.replace_stream_edges(edge.clone(), replacements.clone())?;
+                } else {
+                    let node = self.nodes.get_mut(&edge.get_left()).unwrap();
+                    node.replace_stream_edges(edge.clone(), replacements.clone())?;
+                }
+
+                // add in new edges
+                edges_to_add.append(&mut replacements);
+            }
+        }
+
+        // remove the original node from the graph
+        for new_edge in edges_to_add.iter() {
+            self.add_unique_edge(new_edge.get_left(), new_edge.get_right());
+        }
+        self.remove_node(id)?;
+
+        Ok(())
     }
 
     /// Creates a new program from different subgraphs.
@@ -1061,7 +1411,6 @@ impl Program {
         ret
     }
 }
-
 impl fmt::Debug for Program {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // print ID

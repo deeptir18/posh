@@ -3,7 +3,7 @@ use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
-use program::{NodeId, ProgId};
+use program::{Link, NodeId, ProgId};
 use std::fs::OpenOptions;
 use std::slice::IterMut;
 use stream::{
@@ -211,6 +211,47 @@ impl Rapper for ReadNode {
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
         resolve_file_streams(&mut self.input, parent_dir)?;
         resolve_file_streams(&mut self.stdout, parent_dir)?;
+        Ok(())
+    }
+
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        if self.node_id != edge.get_left() {
+            bail!("Calling replace stream edges on read node where edge left is NOT node id, id: {:?}, edge: {:?}", self.node_id, edge);
+        } else {
+            let mut streams_to_remove: Vec<DashStream> = Vec::new();
+            let mut streams_to_add: Vec<DashStream> = Vec::new();
+            for stream in self.stdout.iter() {
+                match stream {
+                    DashStream::Pipe(pipestream) => {
+                        if pipestream.get_right() == edge.get_right() {
+                            streams_to_remove.push(DashStream::Pipe(pipestream.clone()));
+                            for new_edge in new_edges.iter() {
+                                let mut new_pipestream = pipestream.clone();
+                                new_pipestream.set_right(new_edge.get_right());
+                                streams_to_add.push(DashStream::Pipe(new_pipestream));
+                            }
+                        }
+                    }
+                    DashStream::Tcp(netstream) => {
+                        if netstream.get_right() == edge.get_right() {
+                            streams_to_remove.push(DashStream::Tcp(netstream.clone()));
+                            for new_edge in new_edges.iter() {
+                                let mut new_netstream = netstream.clone();
+                                new_netstream.set_right(new_edge.get_right());
+                                streams_to_add.push(DashStream::Tcp(new_netstream));
+                            }
+                        }
+                    }
+                    _ => {
+                        unreachable!();
+                    }
+                }
+            }
+            assert!(streams_to_remove.len() == 1);
+            self.stdout.retain(|x| !streams_to_remove.contains(x));
+            self.stdout.append(&mut streams_to_add);
+        }
+
         Ok(())
     }
     fn replace_pipe_with_net(

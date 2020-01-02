@@ -117,6 +117,14 @@ impl NetStream {
         )
     }
 
+    pub fn set_left(&mut self, id: NodeId) {
+        self.left = id;
+    }
+
+    pub fn set_right(&mut self, id: NodeId) {
+        self.right = id;
+    }
+
     pub fn get_left(&self) -> NodeId {
         self.left
     }
@@ -279,7 +287,7 @@ impl FileStream {
 
     pub fn get_dot_label(&self) -> String {
         format!(
-            "file: {}\nloc: {:?}\nmode: {:?}",
+            " (file: {}\nloc: {:?}\nmode: {:?})",
             self.name, self.location, self.mode
         )
     }

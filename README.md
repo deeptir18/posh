@@ -5,18 +5,8 @@ The Dash interface assumes that developers provide `annotations` for any program
 The Dash crate includes the server program, client program and backend execution engine necessary to execute programs.
 
 ### ISSUES:
-* Frontend
-    * How to deal with resolving relative filepaths, when file does not exist yet (you wouldn't be able to call cannonicalize in this case)?
+* Cleanup
+    * Frontend Parser: need to clean up functions that re construct the command
+      with the types, especially because all the stuff is effectively done twice
+      for type param
 
-* Backend
-    * Unable to pipe stuff from a remote process into a local file
-    * How should the tcp ports be setup when multiple processes need to pipe back things to client?
-        - It could be multiplexed along a single connection 
-            - But that could produce weird ordering issues (in the output)
-        - Or multiple connections could be opened
-            - That might run into weird port issues if too many ports are being used
-
-* Things that currently need to be fixed before the deadline:
-- Need to turn the shell graph into the new graph format
-- Need to reprogram the location algorithm
-- Then need to test the actual execution

@@ -192,6 +192,11 @@ named_complete!(
     parse_multiple<Info>,
     map!(tag!("multiple"), |_| { Info::Multiple })
 );
+
+named_complete!(
+    parse_splittable<Info>,
+    map!(tag!("splittable"), |_| { Info::Splittable })
+);
 named_complete!(
     parse_individual_info<Info>,
     alt!(
@@ -202,6 +207,7 @@ named_complete!(
             | parse_long
             | parse_desc
             | parse_multiple
+            | parse_splittable
     )
 );
 named_complete!(
@@ -225,6 +231,9 @@ named_complete!(
                     }
                     Info::Multiple => {
                         param.multiple = true;
+                    }
+                    Info::Splittable => {
+                        param.splittable = true;
                     }
                     _ => {
                         bail!("Could not parse individual param: provide only type, size, default value");
@@ -268,6 +277,9 @@ named_complete!(
                     }
                     Info::Multiple => {
                         param.multiple = true;
+                    }
+                    Info::Splittable => {
+                        param.splittable = true;
                     }
                     _ => {
                         bail!("Could not parse individual param: provide only type, size, default value");
@@ -446,8 +458,15 @@ named_complete!(
 );
 
 named_complete!(
+    parse_reduces_input<IndividualParseOption>,
+    map!(tag!("reduces_input"), {
+        |_| IndividualParseOption::ReducesInput
+    })
+);
+
+named_complete!(
     parse_individual_parsing_option<IndividualParseOption>,
-    alt!(parse_long_arg_single_dash | parse_splittable_across_input)
+    alt!(parse_long_arg_single_dash | parse_splittable_across_input | parse_reduces_input)
 );
 named_complete!(
     parse_parsing_options<Result<ParsingOptions>>,
@@ -460,10 +479,7 @@ named_complete!(
             ) >> (info)
         )),
         |vec_options: Vec<IndividualParseOption>| {
-            let mut parsing_opt = ParsingOptions {
-                long_arg_single_dash: false,
-                splittable_across_input: false,
-            };
+            let mut parsing_opt = ParsingOptions::default();
             for opt in vec_options.iter() {
                 match opt {
                     IndividualParseOption::LongArgSingleDash => {
@@ -471,6 +487,9 @@ named_complete!(
                     }
                     IndividualParseOption::SplittableAcrossInput => {
                         parsing_opt.splittable_across_input = true
+                    }
+                    IndividualParseOption::ReducesInput => {
+                        parsing_opt.reduces_input = true;
                     }
                 }
             }
@@ -541,6 +560,14 @@ impl Command {
 
     pub fn long_arg_single_dash(&self) -> bool {
         self.parsing_options.long_arg_single_dash
+    }
+
+    pub fn splittable_across_input(&self) -> bool {
+        self.parsing_options.splittable_across_input
+    }
+
+    pub fn reduces_input(&self) -> bool {
+        self.parsing_options.reduces_input
     }
 
     /// Used for checking if an option passed into the program matches a long option.

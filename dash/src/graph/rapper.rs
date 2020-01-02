@@ -1,4 +1,4 @@
-use super::program::NodeId;
+use super::program::{Link, NodeId};
 use super::stream;
 use super::Location;
 use super::Result;
@@ -122,4 +122,8 @@ pub trait Rapper {
         net: NetStream,
         iotype: IOType,
     ) -> Result<()>;
+
+    fn replace_stream_edges(&mut self, _edge: Link, _new_edges: Vec<Link>) -> Result<()> {
+        bail!("Function replace_stream_edges shouldn't be called from write node");
+    }
 }

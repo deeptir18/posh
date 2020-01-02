@@ -128,6 +128,10 @@ impl FileMap {
                 }
             }
         }
+        // TODO: does no pattern return no replacements?
+        if res.len() == 0 {
+            res.push(filestream.clone());
+        }
         Ok(res)
     }
 

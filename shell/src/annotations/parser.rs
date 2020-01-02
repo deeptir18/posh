@@ -7,6 +7,7 @@ use super::grammar;
 use clap::{App, Arg, ArgMatches};
 use dash::util::Result;
 use failure::bail;
+use glob::glob;
 use itertools::free::join;
 use shellwords::split;
 use std::collections::HashMap;
@@ -56,18 +57,32 @@ impl Parser {
         }
     }
 
+    /// Checks whether the underlying command is parallelizable across input.
+    /// Returns true if ALL the underlying parsers are parallelizable.
+    /// TODO: should be specific to if this specific invocation is parallelizable, not all.
+    pub fn splittable_across_input(&self) -> bool {
+        for ann in self.annotations.iter() {
+            if !ann.splittable_across_input() {
+                return false;
+            } else {
+            }
+        }
+        return true;
+    }
+
     /// Validates an annotation.
     /// Ensures:
     ///     - lone options have short or long specified
     ///     - options with params have short or long specified
     ///     - lone params cannot have multiple values until the last one
+    ///     - should be at most 1 SPLITTABLE ARG (no more)
     ///     TODO: should the error be a specific error type?
     fn validate(&self, annotation: &grammar::Command) -> Result<()> {
         if annotation.command_name != self.name {
             bail!("Annotation does not refer to the same command as the parser");
         }
         let mut lone_args_with_multiple = false;
-
+        let mut found_splittable = false;
         for arg in annotation.args.iter() {
             match arg {
                 grammar::Argument::LoneOption(opt) => {
@@ -75,17 +90,35 @@ impl Parser {
                         bail!("Atleast one of short or long should be specified for option.");
                     }
                 }
-                grammar::Argument::OptWithParam(opt, _param) => {
+                grammar::Argument::OptWithParam(opt, param) => {
                     if opt.short == "" && opt.long == "" {
                         bail!("Atleast one of short or long should be specified for option.");
+                    }
+                    if param.splittable {
+                        found_splittable = true;
                     }
                 }
                 grammar::Argument::LoneParam(param) => {
                     // can only have multiple args if it's the last one
+                    if param.splittable {
+                        if found_splittable {
+                            bail!("Cannot have more than 1 arg with splittable turned on");
+                        }
+                        found_splittable = true;
+                    }
                     match param.size {
-                        grammar::ParamSize::Zero => {}
-                        grammar::ParamSize::One => {}
+                        grammar::ParamSize::Zero => {
+                            bail!("Cannot have param with size 0");
+                        }
+                        grammar::ParamSize::One => {
+                            if param.splittable {
+                                bail!("Cannot have splittable command with size 1");
+                            }
+                        }
                         grammar::ParamSize::SpecificSize(size, sep) => {
+                            if size == 1 && param.splittable {
+                                bail!("Cannot have splittable command with size 1");
+                            }
                             // update this when we allow more delims
                             if size > 1 && sep != grammar::ListSeparator::Comma {
                                 if lone_args_with_multiple {
@@ -137,7 +170,7 @@ impl Parser {
         &mut self,
         invocation: &Vec<String>,
         ind: usize,
-    ) -> Result<grammar::ParsedCommand> {
+    ) -> Result<Vec<grammar::ParsedCommand>> {
         let annotation = &self.annotations[ind];
         let mut annotation_map: HashMap<String, usize> = Default::default();
         let mut app = App::new(annotation.command_name.clone())
@@ -282,8 +315,75 @@ impl Parser {
         matches: &mut ArgMatches,
         annotation: &grammar::Command,
         annotation_map: HashMap<String, usize>,
-    ) -> Result<grammar::ParsedCommand> {
-        let mut typed_args: Vec<(String, grammar::ArgType)> = Vec::new();
+    ) -> Result<Vec<grammar::ParsedCommand>> {
+        let mut ret: Vec<grammar::ParsedCommand> = Vec::new();
+        // find the splittable command, if it exists
+        for arg in matches.args.iter() {
+            let arg_info: &grammar::Argument =
+                &annotation.args[annotation_map[arg.0.clone()] as usize];
+            match arg_info {
+                grammar::Argument::LoneOption(_) => {}
+                grammar::Argument::OptWithParam(_, param) => {
+                    if param.splittable {
+                        match param.size {
+                            grammar::ParamSize::SpecificSize(size, _) => {
+                                for _i in 0..size {
+                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
+                                    ret.push(new_cmd);
+                                }
+                            }
+                            grammar::ParamSize::List(_) => {
+                                let values = matches.values_of(arg.0.clone()).unwrap();
+                                for _i in 0..values.len() {
+                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
+                                    ret.push(new_cmd);
+                                }
+                            }
+                            _ => {}
+                        }
+                        break;
+                    }
+                }
+                grammar::Argument::LoneParam(param) => {
+                    if param.splittable {
+                        match param.size {
+                            grammar::ParamSize::SpecificSize(size, _) => {
+                                for _i in 0..size {
+                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
+                                    ret.push(new_cmd);
+                                }
+                            }
+                            grammar::ParamSize::List(_) => {
+                                // here, values could include a wildcard
+                                // so resolve the wildcard
+                                let mut values = matches.values_of(arg.0.clone()).unwrap();
+                                let mut size = values.len();
+                                if size == 1 {
+                                    match glob(values.next().unwrap()) {
+                                        Ok(list) => {
+                                            size = list.count();
+                                        }
+                                        Err(_) => {}
+                                    }
+                                }
+                                for _i in 0..size {
+                                    let new_cmd = grammar::ParsedCommand::new(&self.name);
+                                    ret.push(new_cmd);
+                                }
+                            }
+                            _ => {}
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        // if no splittable arg in the invocation, need to add 1 empty parsed command
+        if ret.len() == 0 {
+            let new_cmd = grammar::ParsedCommand::new(&self.name);
+            ret.push(new_cmd);
+        }
+
         // TODO: matches.args.iter() might not be publicly available
         // Run two loops, to make sure lone arguments go at the end
         for arg in matches.args.iter() {
@@ -294,23 +394,35 @@ impl Parser {
                 grammar::Argument::LoneOption(opt) => {
                     // TODO: should check if the short or the long value appeared
                     if opt.short != "" {
-                        typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
+                        for parsed_cmd in ret.iter_mut() {
+                            parsed_cmd.add_arg((format!("-{}", &opt.short), grammar::ArgType::Str));
+                        }
                     } else {
                         if annotation.long_arg_single_dash() {
-                            typed_args.push((format!("-{}", &opt.long), grammar::ArgType::Str));
+                            for parsed_cmd in ret.iter_mut() {
+                                parsed_cmd
+                                    .add_arg((format!("-{}", &opt.long), grammar::ArgType::Str));
+                            }
                         } else {
-                            typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                            for parsed_cmd in ret.iter_mut() {
+                                parsed_cmd
+                                    .add_arg((format!("--{}", &opt.long), grammar::ArgType::Str));
+                            }
                         }
                     }
                 }
                 grammar::Argument::OptWithParam(opt, param) => {
-                    if opt.short != "" {
-                        typed_args.push((format!("-{}", &opt.short), grammar::ArgType::Str));
-                    } else {
-                        if annotation.long_arg_single_dash() {
-                            typed_args.push((format!("-{}", &opt.long), grammar::ArgType::Str));
+                    for parsed_cmd in ret.iter_mut() {
+                        if opt.short != "" {
+                            parsed_cmd.add_arg((format!("-{}", &opt.short), grammar::ArgType::Str));
                         } else {
-                            typed_args.push((format!("--{}", &opt.long), grammar::ArgType::Str));
+                            if annotation.long_arg_single_dash() {
+                                parsed_cmd
+                                    .add_arg((format!("-{}", &opt.long), grammar::ArgType::Str));
+                            } else {
+                                parsed_cmd
+                                    .add_arg((format!("--{}", &opt.long), grammar::ArgType::Str));
+                            }
                         }
                     }
 
@@ -320,32 +432,83 @@ impl Parser {
                             unreachable!();
                         }
                         grammar::ParamSize::One => {
-                            values.for_each(|val| {
-                                typed_args.push((val.to_string(), param.param_type));
-                            });
+                            if param.splittable {
+                                assert!(values.len() == 1);
+                            }
+                            for parsed_cmd in ret.iter_mut() {
+                                values.clone().for_each(|val| {
+                                    parsed_cmd.add_arg((val.to_string(), param.param_type));
+                                });
+                            }
                         }
                         grammar::ParamSize::SpecificSize(_, sep)
                         | grammar::ParamSize::List(sep) => {
-                            let mut assigned_type: grammar::ArgType = param.param_type;
-                            if param.param_type == grammar::ArgType::InputFile
-                                && sep == grammar::ListSeparator::Comma
-                            {
-                                assigned_type = grammar::ArgType::InputFileList;
-                            }
-                            if param.param_type == grammar::ArgType::OutputFile
-                                && sep == grammar::ListSeparator::Comma
-                            {
-                                assigned_type = grammar::ArgType::OutputFileList;
-                            }
-
-                            match sep {
-                                grammar::ListSeparator::Space => {
-                                    values.for_each(|val| {
-                                        typed_args.push((val.to_string(), assigned_type));
-                                    });
+                            // if splittable
+                            if param.splittable {
+                                // could be a wildcard
+                                let mut values_clone = values.clone();
+                                let mut real_vals: Vec<String> = Vec::new();
+                                if ret.len() != values_clone.len() {
+                                    for entry in glob(values_clone.next().unwrap())
+                                        .expect("Failed to read pattern")
+                                    {
+                                        match entry {
+                                            Ok(p) => {
+                                                let name = match p.to_str() {
+                                                    Some(n) => n.to_string(),
+                                                    None => bail!(
+                                                        "Could not turn path: {:?} to string",
+                                                        p
+                                                    ),
+                                                };
+                                                real_vals.push(name.to_string());
+                                            }
+                                            Err(e) => {
+                                                bail!("One of paths is error: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
+                                        let value = &real_vals[i];
+                                        parsed_cmd.add_arg((value.clone(), param.param_type));
+                                    }
+                                } else {
+                                    assert_eq!(ret.len(), values.len());
+                                    // add into each cmd separately
+                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
+                                        let value = values.clone().nth(i).unwrap();
+                                        parsed_cmd.add_arg((value.to_string(), param.param_type));
+                                    }
                                 }
-                                grammar::ListSeparator::Comma => {
-                                    typed_args.push((join(values, ","), assigned_type));
+                            } else {
+                                let mut assigned_type: grammar::ArgType = param.param_type;
+                                if param.param_type == grammar::ArgType::InputFile
+                                    && sep == grammar::ListSeparator::Comma
+                                {
+                                    assigned_type = grammar::ArgType::InputFileList;
+                                }
+                                if param.param_type == grammar::ArgType::OutputFile
+                                    && sep == grammar::ListSeparator::Comma
+                                {
+                                    assigned_type = grammar::ArgType::OutputFileList;
+                                }
+                                match sep {
+                                    grammar::ListSeparator::Space => {
+                                        for parsed_cmd in ret.iter_mut() {
+                                            values.clone().for_each(|val| {
+                                                parsed_cmd
+                                                    .add_arg((val.to_string(), assigned_type));
+                                            });
+                                        }
+                                    }
+                                    grammar::ListSeparator::Comma => {
+                                        for parsed_cmd in ret.iter_mut() {
+                                            parsed_cmd.add_arg((
+                                                join(values.clone(), ","),
+                                                assigned_type,
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -365,31 +528,82 @@ impl Parser {
                             unreachable!();
                         }
                         grammar::ParamSize::One => {
-                            values.for_each(|val| {
-                                typed_args.push((val.to_string(), param.param_type));
-                            });
+                            if param.splittable {
+                                assert!(values.len() == 1);
+                            }
+                            for parsed_cmd in ret.iter_mut() {
+                                values.clone().for_each(|val| {
+                                    parsed_cmd.add_arg((val.to_string(), param.param_type));
+                                });
+                            }
                         }
                         grammar::ParamSize::SpecificSize(_, sep)
                         | grammar::ParamSize::List(sep) => {
-                            let mut assigned_type: grammar::ArgType = param.param_type;
-                            if param.param_type == grammar::ArgType::InputFile
-                                && sep == grammar::ListSeparator::Comma
-                            {
-                                assigned_type = grammar::ArgType::InputFileList;
-                            }
-                            if param.param_type == grammar::ArgType::OutputFile
-                                && sep == grammar::ListSeparator::Comma
-                            {
-                                assigned_type = grammar::ArgType::OutputFileList;
-                            }
-                            match sep {
-                                grammar::ListSeparator::Space => {
-                                    values.for_each(|val| {
-                                        typed_args.push((val.to_string(), assigned_type));
-                                    });
+                            if param.splittable {
+                                // could be a wildcard
+                                let mut values_clone = values.clone();
+                                let mut real_vals: Vec<String> = Vec::new();
+                                if ret.len() != values_clone.len() {
+                                    for entry in glob(values_clone.next().unwrap())
+                                        .expect("Failed to read pattern")
+                                    {
+                                        match entry {
+                                            Ok(p) => {
+                                                let name = match p.to_str() {
+                                                    Some(n) => n.to_string(),
+                                                    None => bail!(
+                                                        "Could not turn path: {:?} to string",
+                                                        p
+                                                    ),
+                                                };
+                                                real_vals.push(name.to_string());
+                                            }
+                                            Err(e) => {
+                                                bail!("One of paths is error: {:?}", e);
+                                            }
+                                        }
+                                    }
+                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
+                                        let value = &real_vals[i];
+                                        parsed_cmd.add_arg((value.clone(), param.param_type));
+                                    }
+                                } else {
+                                    assert_eq!(ret.len(), values.len());
+                                    // add into each cmd separately
+                                    for (i, parsed_cmd) in ret.iter_mut().enumerate() {
+                                        let value = values.clone().nth(i).unwrap();
+                                        parsed_cmd.add_arg((value.to_string(), param.param_type));
+                                    }
                                 }
-                                grammar::ListSeparator::Comma => {
-                                    typed_args.push((join(values, ","), assigned_type));
+                            } else {
+                                let mut assigned_type: grammar::ArgType = param.param_type;
+                                if param.param_type == grammar::ArgType::InputFile
+                                    && sep == grammar::ListSeparator::Comma
+                                {
+                                    assigned_type = grammar::ArgType::InputFileList;
+                                }
+                                if param.param_type == grammar::ArgType::OutputFile
+                                    && sep == grammar::ListSeparator::Comma
+                                {
+                                    assigned_type = grammar::ArgType::OutputFileList;
+                                }
+                                match sep {
+                                    grammar::ListSeparator::Space => {
+                                        for parsed_cmd in ret.iter_mut() {
+                                            values.clone().for_each(|val| {
+                                                parsed_cmd
+                                                    .add_arg((val.to_string(), assigned_type));
+                                            });
+                                        }
+                                    }
+                                    grammar::ListSeparator::Comma => {
+                                        for parsed_cmd in ret.iter_mut() {
+                                            parsed_cmd.add_arg((
+                                                join(values.clone(), ","),
+                                                assigned_type,
+                                            ));
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -399,17 +613,17 @@ impl Parser {
             }
         }
 
-        Ok(grammar::ParsedCommand {
-            command_name: self.name.clone(),
-            typed_args: typed_args,
-        })
+        Ok(ret)
     }
 
     /// Tries to parse a command with each of the parsers in the whitelist.
     /// Returns the first Program that matches a parser.
     /// If no parser matches this invocation, returns a parsed command where all arguments are of
     /// type "str" (the default).
-    pub fn parse_command(&mut self, invocation: Vec<String>) -> Result<grammar::ParsedCommand> {
+    pub fn parse_command(
+        &mut self,
+        invocation: Vec<String>,
+    ) -> Result<Vec<grammar::ParsedCommand>> {
         for i in 0..self.annotations.len() {
             match self.parse_invocation(&invocation, i) {
                 Ok(p) => {
@@ -427,7 +641,8 @@ impl Parser {
             invocation
         );
 
-        self.default_parse(invocation)
+        let res = self.default_parse(invocation)?;
+        Ok(vec![res])
     }
 
     fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {
