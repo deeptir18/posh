@@ -302,9 +302,6 @@ impl Rapper for CommandNode {
     fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
         // find all pipestreams with this edge as left and right
         // if this node is not in the left or right, don't do any searching
-        println!("---");
-        println!("edge: {:?}", edge);
-        println!("replacements: {:?}", new_edges);
         if self.node_id != edge.get_left() && self.node_id != edge.get_right() {
             bail!("Calling replace stream edges where cmd node is neither left or right of edge to replace, id: {:?}, old_edge: {:?}", self.node_id, edge);
         } else {
@@ -384,11 +381,6 @@ impl Rapper for CommandNode {
                     }
                 }
             }
-            println!("---");
-            println!("modifying node: {:?}", self.get_id());
-            println!("streams to add: {:?}", streams_to_add);
-            println!("streams to remove: {:?}", streams_to_remove);
-            println!("---");
             // add and remove the streams
             if self.get_id() == edge.get_left() {
                 self.stdout.retain(|x| !streams_to_remove.contains(x));
@@ -411,8 +403,30 @@ impl Rapper for CommandNode {
                 }
             }
         }
-        println!("---");
         Ok(())
+    }
+
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        if self.stdout.len() > 1 {
+            panic!("Calling get stdout id, but stdout is more than length 1");
+        }
+
+        if self.stdout.len() == 0 {
+            return None;
+        } else {
+            let stream = &self.stdout[0];
+            match stream {
+                DashStream::Pipe(ps) => {
+                    return Some(ps.get_right());
+                }
+                DashStream::Tcp(ns) => {
+                    return Some(ns.get_right());
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+        }
     }
 
     fn replace_pipe_with_net(

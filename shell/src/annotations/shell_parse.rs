@@ -121,14 +121,12 @@ impl ShellGraphNode {
                     }
                 }
                 RawShellElement::StdoutAppend => {
-                    println!("reaching stdout append");
                     if let Some(next_elt) = iter.next() {
                         match next_elt {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
                                 let mut fs = FileStream::new(filename, Location::Client);
                                 fs.set_mode(FileMode::APPEND);
-                                println!("We set filemode to be append I promise");
                                 writenode.add_stdout(DashStream::File(fs))?;
                                 stdout_nodes.push(writenode);
                             }
@@ -582,7 +580,6 @@ impl ShellSplit {
                     elements.push(RawShellElement::Stdout);
                 }
                 ">>" => {
-                    println!("Saw append");
                     elements.push(RawShellElement::StdoutAppend);
                 }
                 "2>" => {

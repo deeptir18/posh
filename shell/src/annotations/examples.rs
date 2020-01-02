@@ -39,8 +39,8 @@ fn get_grep_parser() -> Parser {
     // supplied first
     // TODO: is this a big deal?
     let annotation =
-        "grep[splittable_across_input]: FLAGS:[(short:v,long:invert-match)] PARAMS:[(type:str,size:1),(type:input_file,size:list(list_separator:( )))]";
-    let annotation1 = "grep[splittable_across_input]: FLAGS:[(short:v,long:invert-match)] OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
+        "grep[splittable_across_input,reduces_input]: FLAGS:[(short:v,long:invert-match)] PARAMS:[(type:str,size:1),(type:input_file,size:list(list_separator:( )))]";
+    let annotation1 = "grep[splittable_across_input,reduces_input]: FLAGS:[(short:v,long:invert-match)] OPTPARAMS:[(short:e,long:regexp,type:str,size:1),(short:f,long:file,type:input_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]";
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();

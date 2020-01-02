@@ -34,7 +34,7 @@ fn main() {
     let opt = Opt::from_args();
     let output_folder = opt.output_folder;
     let dot_binary = opt.dot_binary;
-    /*run_viz(
+    run_viz(
         &dot_binary,
         "cat /d/c/b/1.INFO | grep '[RAY]' | head -n1 | cut -c 7- > /d/c/b/rays.csv",
         "rt_cmd1",
@@ -68,8 +68,8 @@ fn main() {
         "port_scan_cmd",
         &output_folder,
         VizType::Dash,
-    );*/
-    
+    );
+
     run_viz(
         &dot_binary,
         "cat /d/c/foo /b/a/foo /e/d/foo /f/e/foo | grep 'bar' > local.txt",
@@ -150,7 +150,7 @@ fn visualize_dash_graph(dot_binary: &str, command: &str, name: &str, folder: &st
     interpreter.resolve_env_vars(&mut program)?;
     interpreter.parallelize_cmd_nodes(&mut program)?;
     interpreter.resolve_filestreams(&mut program)?;
-    //interpreter.assign_program_location(&mut program)?;
+    interpreter.assign_program_location(&mut program)?;
     // invoke graphviz
     program.write_dot(dot_path_str)?;
     invoke_graph_viz(dot_binary, dot_path_str, graph_path_str)?;

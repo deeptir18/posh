@@ -243,17 +243,12 @@ impl FileStream {
     /// again to cannonicalize.
     /// TODO: If that STILL doesn't work you have to do some more work.
     pub fn dash_cannonicalize(&mut self, pwd: &PathBuf) -> Result<()> {
-        println!("trying to canonicalize: {:?}", self.name);
         let name_clone = self.name.clone();
         let path = Path::new(&name_clone);
-        if path.is_absolute() {
-            println!("path is absolute: {:?}", path);
-        }
 
         // Then try to cannonicalize the file:
         match canonicalize(&name_clone) {
             Ok(pathbuf) => {
-                println!("was able to canonicalize: {:?}", self.name);
                 // change name to be this full path name
                 match pathbuf.to_str() {
                     Some(p) => self.name = p.to_string(),
@@ -271,7 +266,6 @@ impl FileStream {
         // We can explicitly address this as a concern in the implementation.
 
         let new_relative_path = pwd.clone().as_path().join(path);
-        println!("res: {:?}", new_relative_path);
         match new_relative_path.to_path_buf().to_str() {
             Some(p) => self.name = p.to_string(),
             None => {
@@ -311,7 +305,6 @@ impl FileStream {
     }
 
     pub fn strip_prefix(&mut self, prefix: &str) -> Result<()> {
-        println!("trying to strip prefix: {:?} from {:?}", prefix, self.name);
         let mut path = Path::new(&self.name);
         path = path.strip_prefix(prefix)?;
         let loc = match path.to_str() {

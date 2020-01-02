@@ -32,6 +32,14 @@ impl Into<Option<cmd::CommandNode>> for Elem {
 }
 
 impl Rapper for Elem {
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        match self {
+            Elem::Write(write_node) => write_node.get_stdout_id(),
+            Elem::Read(read_node) => read_node.get_stdout_id(),
+            Elem::Cmd(cmd_node) => cmd_node.get_stdout_id(),
+        }
+    }
+
     fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
         match self {
             Elem::Write(write_node) => write_node.replace_stream_edges(edge, new_edges),
@@ -378,10 +386,14 @@ impl Node {
     pub fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
         self.elem.replace_stream_edges(edge, new_edges)
     }
+
+    pub fn get_stdout_id(&self) -> Option<NodeId> {
+        self.elem.get_stdout_id()
+    }
 }
 
 /// One sided edges in the program graph
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub struct Link {
     /// Left edge node id
     left: NodeId,
@@ -414,6 +426,7 @@ pub struct Program {
     edges: Vec<Link>,
     counter: u32,
     sink_nodes: Vec<NodeId>,
+    source_nodes: Vec<NodeId>,
 }
 
 impl Default for Program {
@@ -425,6 +438,7 @@ impl Default for Program {
             edges: vec![],
             counter: 0,
             sink_nodes: vec![],
+            source_nodes: vec![],
         }
     }
 }
@@ -817,6 +831,9 @@ impl Program {
         if self.sink_nodes.contains(&id) {
             self.sink_nodes.retain(|x| *x != id);
         }
+        if self.source_nodes.contains(&id) {
+            self.source_nodes.retain(|x| *x != id);
+        }
         Ok(())
     }
 
@@ -1153,6 +1170,38 @@ impl Program {
         Ok(())
     }
 
+    // Finds source->sink paths, ignoring paths that involve output for stderr.
+    // RIGHT NOW, this works because we have the guarantee that each node has at most 2 outward
+    // edges, 1 for stdout and 1 for stderr.
+    // Need to redo this if we ever have nodes that broadcast output to multiple nodes.
+    pub fn get_stdout_forward_paths(&self) -> Vec<Vec<NodeId>> {
+        let mut ret: Vec<Vec<NodeId>> = Vec::new();
+        for node_id in self.source_nodes.iter() {
+            let mut path: Vec<NodeId> = Vec::new();
+            let mut found_sink = false;
+            let mut current_node = *node_id;
+            path.push(current_node);
+            while !found_sink {
+                let node = self.nodes.get(&current_node).unwrap();
+                match node.get_stdout_id() {
+                    Some(n) => {
+                        current_node = n;
+                    }
+                    None => {
+                        found_sink = true;
+                    }
+                }
+                path.push(current_node);
+
+                if self.sink_nodes.contains(&current_node) {
+                    found_sink = true;
+                }
+            }
+            ret.push(path);
+        }
+        ret
+    }
+
     /// Splits the program into different sub-graphs that need to be executed on different
     /// machines.
     /// Makes sure to preserve the nodeIds.
@@ -1199,18 +1248,27 @@ impl Program {
         self.nodes.insert(self.counter + 1, node);
         self.counter += 1;
         self.sink_nodes.push(self.counter); // node with no dependencies is automatically a sink
+        self.source_nodes.push(self.counter); // node with no dependences is automatically a source
         self.counter
     }
 
     pub fn add_unique_node(&mut self, node: Node) {
-        let mut is_connected = false;
+        let mut is_connected_left = false;
+        let mut is_connected_right = false;
         for edge in self.edges.iter() {
             if edge.get_left() == node.get_id() {
-                is_connected = true;
+                is_connected_left = true;
+            }
+            if edge.get_right() == node.get_id() {
+                is_connected_right = true;
             }
         }
-        if !is_connected {
+        if !is_connected_left {
             self.sink_nodes.push(node.get_id());
+        }
+
+        if !is_connected_right {
+            self.source_nodes.push(node.get_id());
         }
         self.nodes.insert(node.get_id(), node);
     }
@@ -1237,6 +1295,9 @@ impl Program {
             if self.sink_nodes.contains(&left) {
                 self.sink_nodes.retain(|&x| x != left);
             }
+            if self.source_nodes.contains(&right) {
+                self.source_nodes.retain(|&x| x != right);
+            }
         }
     }
 
@@ -1248,12 +1309,16 @@ impl Program {
         if self.sink_nodes.contains(&left.get_id()) {
             self.sink_nodes.retain(|&x| x != left.get_id());
         }
+        if self.source_nodes.contains(&right.get_id()) {
+            self.source_nodes.retain(|&x| x != right.get_id());
+        }
     }
 
     /// Adds an entire pipeline of commands (e.g., a single line of commands connected to each
     /// other)
     pub fn add_pipeline(&mut self, elems: Vec<Elem>) {
         let mut last_node_id: Option<u32> = None;
+        let mut first_node_id: Option<u32> = None;
         for elem in elems {
             let node: Node = Node {
                 elem: elem,
@@ -1261,6 +1326,12 @@ impl Program {
             };
             self.nodes.insert(self.counter + 1, node);
             self.counter += 1;
+            match first_node_id {
+                Some(_id) => {}
+                None => {
+                    first_node_id = Some(self.counter - 1);
+                }
+            }
             match last_node_id {
                 Some(id) => self.edges.push(Link {
                     left: id,
@@ -1271,6 +1342,7 @@ impl Program {
             last_node_id = Some(self.counter);
         }
         self.sink_nodes.push(last_node_id.unwrap()); // safe to append the last line in this vector
+        self.source_nodes.push(first_node_id.unwrap());
     }
 
     /// finds the dependent n
@@ -1424,6 +1496,9 @@ impl fmt::Debug for Program {
         for link in self.edges.iter() {
             f.pad(&format!("edge: {:?}\n", link.clone()))?;
         }
+
+        // print the source nodes
+        f.pad(&format!("source nodes: {:?}\n", self.source_nodes))?;
         // print the sink nodes
         f.pad(&format!("sink nodes: {:?}\n", self.sink_nodes))
     }

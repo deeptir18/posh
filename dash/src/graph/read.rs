@@ -254,6 +254,30 @@ impl Rapper for ReadNode {
 
         Ok(())
     }
+
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        if self.stdout.len() > 1 {
+            panic!("Calling get stdout id, but stdout is more than length 1");
+        }
+
+        if self.stdout.len() == 0 {
+            return None;
+        } else {
+            let stream = &self.stdout[0];
+            match stream {
+                DashStream::Pipe(ps) => {
+                    return Some(ps.get_right());
+                }
+                DashStream::Tcp(ns) => {
+                    return Some(ns.get_right());
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+        }
+    }
+
     fn replace_pipe_with_net(
         &mut self,
         pipe: PipeStream,

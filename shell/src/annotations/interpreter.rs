@@ -20,6 +20,7 @@ use rapper::Rapper;
 use std::collections::{HashMap, HashSet};
 use std::convert::Into;
 use std::env;
+use std::f64;
 use std::iter::FromIterator;
 use std::path::PathBuf;
 pub struct Interpreter {
@@ -88,7 +89,6 @@ impl Interpreter {
 
         // turn this into node graph that can be fed into the annotation layer to be executed
         let mut program = shellgraph.convert_into_program()?;
-        println!("prog: {:?}", program);
 
         // apply the parser
         // note: involves interpreting * for JUST parallelizable arguments
@@ -112,6 +112,22 @@ impl Interpreter {
         for (name, parser) in self.parsers.iter() {
             if cmd_name == name {
                 if parser.splittable_across_input() {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // TODO: Whether a cmd reduces input is a PER parser attribute.
+    // Need to distinguish which individual parser this invocation comes from and determine the
+    // extra attributes there.
+    // Have the place that generates typed args give up the parser ID and keep track to later query
+    // for this type of information.
+    pub fn check_cmd_reduces_input(&self, cmd_name: &str) -> bool {
+        for (name, parser) in self.parsers.iter() {
+            if cmd_name == name {
+                if parser.reduces_input() {
                     return true;
                 }
             }
@@ -188,25 +204,19 @@ impl Interpreter {
                                 new_args.push(NodeArg::Str(val.to_string()));
                             }
                             NodeArg::Stream(ref mut fs) => {
-                                println!("---");
-                                println!("Handling resolution of: {:?}", fs);
                                 // first, split into multiple filestreams if there are any patterns
                                 let mut replacements =
                                     self.filemap.resolve_filestream_with_pattern(fs)?;
-                                println!("Replacements: {:?}", replacements);
                                 // then, apply resolution
                                 for fs in replacements.iter_mut() {
                                     self.filemap.resolve_filestream(fs, &self.pwd)?;
-                                    println!("Fs after resolution: {:?}", fs);
                                 }
                                 for fs in replacements.into_iter() {
                                     new_args.push(NodeArg::Stream(fs));
                                 }
-                                println!("---");
                             }
                         }
                     }
-                    println!("new args: {:?}", new_args);
                     command_node.set_args(new_args);
                 }
                 Elem::Write(ref mut write_node) => {
@@ -259,19 +269,12 @@ impl Interpreter {
             }
         }
 
-        for (id, parsed_cmds) in node_repl_map.iter() {
-            println!("{:?}: {:?}", id, parsed_cmds);
-        }
         // iterate through node replacement map,
         // generate new command nodes to replace
         for (id, parsed_commands) in node_repl_map.into_iter() {
             let node = program.get_node(id).unwrap();
 
             let new_command_nodes = self.interpret_cmd_types(parsed_commands, node)?;
-            for node in new_command_nodes.iter() {
-                println!("replacement node: {:?}", node);
-                println!("-------");
-            }
             program.replace_node(id, new_command_nodes)?;
         }
         Ok(())
@@ -377,6 +380,174 @@ impl Interpreter {
         Ok(())
     }
 
+    /// Custom scheduling algorithm (DP/Max Flow based) to assign locations for nodes that haven't
+    /// previously been assigned.
+    /// Algorithm works as follows:
+    ///     Iterate through each source->sink in the graph by following the edges from every node.
+    ///     Assumes source->sink changes location (from the forced assignments) at most once.
+    ///     For each path, assign each edge a weight depending on if the command node "reduces
+    ///     output" or not.
+    ///     Start the weight count at 1, and reduce by .5 if the node reduces output (absolute
+    ///     numbers don't really matter here).
+    ///     Once all edges in this path has a weight, calculate the optimal cut by looking for the
+    ///     edge with the least weight.
+    ///     If there are multiple edges with the least weight, choose among the edges with the
+    ///     least weight that causes more nodes to be assigned to the server.
+    ///     This source->sink path defines a location for each node.
+    ///     Calculate the location according to each source->sink path.
+    ///     If a node in the end has multiple locations, assign to the client.
+    ///     Ignore all edges that go to a write node that writes to stderr.
+    /// There might be a better way to define this algorithm, figure that out.
+    fn optimize_node_schedule(
+        &mut self,
+        prog: &mut Program,
+        assigned: &HashSet<NodeId>,
+    ) -> Result<()> {
+        // Store the locations for each unassigned node based on the algorithm.
+        let mut new_assignments: HashMap<NodeId, HashMap<Location, u32>> = HashMap::default();
+        // closure to insert into new assignments
+        let increment =
+            |id: NodeId,
+             loc: Location,
+             new_assignments: &mut HashMap<NodeId, HashMap<Location, u32>>| {
+                if new_assignments.contains_key(&id) {
+                    let entry = new_assignments.get_mut(&id).unwrap();
+                    if entry.contains_key(&loc) {
+                        let count = entry.get_mut(&loc).unwrap();
+                        *count += 1;
+                    } else {
+                        entry.insert(loc.clone(), 1);
+                    }
+                } else {
+                    let mut new_map: HashMap<Location, u32> = HashMap::default();
+                    new_map.insert(loc.clone(), 1);
+                    new_assignments.insert(id, new_map);
+                }
+            };
+
+        // Get a list of source->sink paths for the program.
+        for path in prog.get_stdout_forward_paths().iter() {
+            // first, check if all nodes in this path are assigned, then do nothing for this path
+            let mut all_assigned = true;
+            for id in path.iter() {
+                if !assigned.contains(id) {
+                    all_assigned = false;
+                    break;
+                }
+            }
+            if all_assigned {
+                continue;
+            }
+
+            // if the source and the sink are at the same location, assign all in between nodes to
+            // be that same location
+            // Is this a requirement?
+            assert!(path.len() >= 2);
+            let first_node_loc = prog.get_node(path[0]).unwrap().get_loc();
+            let last_node_loc = prog.get_node(path[path.len() - 1]).unwrap().get_loc();
+            if first_node_loc == last_node_loc {
+                for id in path.iter() {
+                    increment(*id, first_node_loc.clone(), &mut new_assignments);
+                }
+                continue;
+            }
+
+            // otherwise, find the edge with the min assigned 'weight' based on if the node reduces
+            // input or not
+            // first: assign 'weights' to the nodes.
+            let mut weights: Vec<(usize, f64)> = Vec::new();
+            let mut last_id = path[0];
+            let mut current_weight: f64 = 1.0;
+            for (ind, id) in path.iter().enumerate() {
+                if ind == 0 {
+                    continue;
+                }
+
+                // figure out if the previous
+                // node reduces input or not
+                let last_node = prog.get_node(last_id).unwrap();
+                let reduces_input = match last_node.get_elem() {
+                    Elem::Cmd(cmdnode) => {
+                        let cmd_name = cmdnode.get_name();
+                        self.check_cmd_reduces_input(&cmd_name)
+                    }
+                    Elem::Read(_readnode) => false,
+                    Elem::Write(_writenode) => {
+                        // writenode is always a sink, never left side of an edge
+                        unreachable!();
+                    }
+                };
+                if reduces_input {
+                    current_weight = current_weight / 2 as f64;
+                }
+
+                // insert the weight of the *previous edge*;
+                weights.push((ind - 1, current_weight));
+
+                last_id = *id;
+            }
+
+            // now, find the min "cut"
+            let mut min_weight = f64::INFINITY;
+            for (_, weight) in weights.iter() {
+                if weight.clone() < min_weight {
+                    min_weight = *weight;
+                }
+            }
+
+            let mut min_weight_inds: Vec<usize> = Vec::new();
+            for (id, weight) in weights.iter() {
+                if *weight == min_weight {
+                    min_weight_inds.push(*id);
+                }
+            }
+
+            if min_weight_inds.len() == 1 {
+                // assign all the nodes until the min weight id to the source location
+                let min_ind = min_weight_inds[0];
+                for (ind, node_id) in path.iter().enumerate() {
+                    if ind <= min_ind && !assigned.contains(node_id) {
+                        increment(*node_id, first_node_loc.clone(), &mut new_assignments);
+                    } else if ind > min_ind && !assigned.contains(node_id) {
+                        increment(*node_id, last_node_loc.clone(), &mut new_assignments);
+                    } else {
+                    }
+                }
+            } else {
+                // choose cut node such that *more* nodes are assigned to the server
+                let mut min_ind = min_weight_inds[min_weight_inds.len() - 1];
+                if first_node_loc == Location::Client {
+                    min_ind = min_weight_inds[0];
+                } else {
+                }
+                for (ind, node_id) in path.iter().enumerate() {
+                    if ind <= min_ind && !assigned.contains(node_id) {
+                        increment(*node_id, first_node_loc.clone(), &mut new_assignments);
+                    } else if ind > min_ind && !assigned.contains(node_id) {
+                        increment(*node_id, last_node_loc.clone(), &mut new_assignments);
+                    } else {
+                    }
+                }
+            }
+        }
+
+        // now go through new assignments, and actually assign new nodes
+        for (id, entry) in new_assignments.iter() {
+            let node = prog.get_mut_node(*id).unwrap();
+            if entry.len() > 1 {
+                // If multiple paths determine different location for node, set location as client
+                // TODO: is this the best solution?
+                node.set_loc(Location::Client);
+            } else {
+                assert!(entry.len() == 1);
+                for (loc, _) in entry.iter() {
+                    node.set_loc(loc.clone());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Assigns a location to each node in the program,
     /// and modifies any pipes to be TCP streams when necessary.
     /// Current algorithm:
@@ -437,10 +608,13 @@ impl Interpreter {
             }
         }
 
+        // uses an algorithm to assign the location of the rest of the nodes
+        self.optimize_node_schedule(prog, &assigned)?;
+
         // TODO: program in a DP to calculate the optimal location for each node
         // right now -- just fill in the nodes where *most* of the nodes are evaluating
         // but ignore the write stderr nodes
-        let mut location_count: HashMap<Location, u32> = HashMap::default();
+        /*let mut location_count: HashMap<Location, u32> = HashMap::default();
         for (id, node) in prog.get_nodes_iter() {
             if assigned.contains(id) {
                 let mut ignore = false;
@@ -486,7 +660,7 @@ impl Interpreter {
             if !assigned.contains(id) {
                 node.set_loc(max_counted_location.clone());
             }
-        }
+        }*/
 
         prog.make_pipes_networked()?;
 

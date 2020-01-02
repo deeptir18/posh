@@ -110,6 +110,12 @@ impl Rapper for WriteNode {
 
         Ok(())
     }
+
+    /// Write nodes have no "stdouts" - should always be a sink.
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        return None;
+    }
+
     fn replace_pipe_with_net(
         &mut self,
         pipe: PipeStream,

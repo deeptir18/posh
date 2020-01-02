@@ -126,4 +126,8 @@ pub trait Rapper {
     fn replace_stream_edges(&mut self, _edge: Link, _new_edges: Vec<Link>) -> Result<()> {
         bail!("Function replace_stream_edges shouldn't be called from write node");
     }
+
+    // Gets the ID of where stdout of this node goes.
+    // Assumes nodes don't broadcast to multiple nodes.
+    fn get_stdout_id(&self) -> Option<NodeId>;
 }

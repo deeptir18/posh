@@ -70,6 +70,16 @@ impl Parser {
         return true;
     }
 
+    pub fn reduces_input(&self) -> bool {
+        for ann in self.annotations.iter() {
+            if !ann.reduces_input() {
+                return false;
+            } else {
+            }
+        }
+        return true;
+    }
+
     /// Validates an annotation.
     /// Ensures:
     ///     - lone options have short or long specified
