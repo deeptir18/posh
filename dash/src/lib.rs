@@ -1,4 +1,5 @@
 #![feature(rustc_private)]
+#![feature(never_type)]
 #[macro_use]
 extern crate serde;
 extern crate failure;
