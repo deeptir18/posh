@@ -171,16 +171,17 @@ named_complete!(
 
 named_complete!(
     parse_command_name<String>,
-    map!(many1!(alt!(alpha1 | tag!(" ") | tag!("-"))), |elts: Vec<
-        CompleteByteSlice,
-    >| {
-        let mut name = "".to_string();
-        for elt in elts.iter() {
-            let str_repr = str::from_utf8(elt.0).unwrap();
-            name.push_str(str_repr);
+    map!(
+        many1!(alt!(alpha1 | tag!(" ") | tag!("/") | tag!("-"))),
+        |elts: Vec<CompleteByteSlice>| {
+            let mut name = "".to_string();
+            for elt in elts.iter() {
+                let str_repr = str::from_utf8(elt.0).unwrap();
+                name.push_str(str_repr);
+            }
+            name
         }
-        name
-    })
+    )
 );
 
 // TODO: need to include dashes here somehow
@@ -212,6 +213,10 @@ named_complete!(
     map!(tag!("splittable"), |_| { Info::Splittable })
 );
 named_complete!(
+    parse_attached<Info>,
+    map!(tag!("attached"), |_| { Info::Attached })
+);
+named_complete!(
     parse_individual_info<Info>,
     alt!(
         parse_type
@@ -222,6 +227,7 @@ named_complete!(
             | parse_desc
             | parse_multiple
             | parse_splittable
+            | parse_attached
     )
 );
 named_complete!(
@@ -294,6 +300,9 @@ named_complete!(
                     }
                     Info::Splittable => {
                         param.splittable = true;
+                    }
+                    Info::Attached => {
+                        param.attached_to_short = true;
                     }
                     _ => {
                         bail!("Could not parse individual param: provide only type, size, default value");

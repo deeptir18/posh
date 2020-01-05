@@ -1391,7 +1391,6 @@ impl Program {
     pub fn execute(&mut self, stream_map: SharedStreamMap) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
-        println!("execution order of nodes: {:?}", execution_order);
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
         let mut node_thread_ids: Vec<NodeId> = Vec::new();
         // First execute any commands, e.g. spawn the initial processes

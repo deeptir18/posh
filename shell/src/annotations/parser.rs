@@ -430,7 +430,23 @@ impl Parser {
                     }
                 }
                 grammar::Argument::OptWithParam(opt, param) => {
+                    let mut no_vals = false;
                     for parsed_cmd in ret.iter_mut() {
+                        // only relevant to opt with param
+                        if param.attached_to_short && opt.short != "" {
+                            assert!(param.size == grammar::ParamSize::One);
+                            let values = matches.values_of(arg.0.clone()).unwrap();
+                            assert!(values.len() == 1);
+                            values.clone().for_each(|val| {
+                                parsed_cmd.add_arg((
+                                    format!("-{}{}", &opt.short, val.to_string()),
+                                    grammar::ArgType::Str,
+                                ));
+                            });
+                            no_vals = true;
+                            continue;
+                        } else {
+                        }
                         if opt.short != "" {
                             parsed_cmd.add_arg((format!("-{}", &opt.short), grammar::ArgType::Str));
                         } else {
@@ -442,6 +458,9 @@ impl Parser {
                                     .add_arg((format!("--{}", &opt.long), grammar::ArgType::Str));
                             }
                         }
+                    }
+                    if no_vals {
+                        continue;
                     }
 
                     let values = matches.values_of(arg.0.clone()).unwrap();

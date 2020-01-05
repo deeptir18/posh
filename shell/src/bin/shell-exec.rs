@@ -10,7 +10,7 @@ use shell::annotations::interpreter;
 use std::env::current_dir;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::exit;
 use structopt::StructOpt;
 
@@ -39,6 +39,12 @@ struct Opt {
         help = "File with annotation list."
     )]
     annotation_file: String,
+    #[structopt(
+        short = "pwd",
+        long = "pwd",
+        help = "Working directory to run this script"
+    )]
+    pwd: String,
 }
 
 fn main() {
@@ -47,14 +53,18 @@ fn main() {
     let mount_info = opt.mount_file;
     let annotation_file = opt.annotation_file;
     let runtime_port = opt.runtime_port;
-
-    let pwd = match current_dir() {
+    let given_pwd = opt.pwd;
+    let mut pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
             eprintln!("Failed to find current dir: {:?}", e);
             exit(exitcode::USAGE);
         }
     };
+
+    if given_pwd != "." {
+        pwd = Path::new(&given_pwd).to_path_buf();
+    }
 
     let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd.clone()) {
         Ok(s) => s,
@@ -111,6 +121,11 @@ fn run_cmd(
     client: &mut client::ShellClient,
 ) -> Result<()> {
     let pwd = current_dir()?;
+    // if the line begins with a comment, just return
+    match cmd.to_string().starts_with("#") {
+        true => return Ok(()),
+        false => {}
+    }
     let dag = match interpreter.parse(&cmd) {
         Ok(d) => match d {
             Some(graph) => graph,

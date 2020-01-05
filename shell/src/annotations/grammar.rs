@@ -108,6 +108,8 @@ pub struct Param {
     pub multiple: bool,
     /// Is this parameter splittable, while keeping the other arguments the same?
     pub splittable: bool,
+    /// Sometimes short args are attached to the opt, e.g. pr -s,
+    pub attached_to_short: bool,
 }
 
 /// All the possible things provided in the annotation.
@@ -122,6 +124,7 @@ pub enum Info {
     Desc(String), // I really should remove this one it's just clutter
     Multiple,     // allow multiple occurrences or not
     Splittable,   // If this argument is splittable
+    Attached,     // If argument is attached to the option name
 }
 
 pub enum SizeInfo {

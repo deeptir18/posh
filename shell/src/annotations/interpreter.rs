@@ -87,9 +87,11 @@ impl Interpreter {
         let shellsplit = shell_parse::ShellSplit::new(command)?;
         // turn shell split into shell graph
         let shellgraph = shellsplit.convert_into_shell_graph()?;
+        println!("shell graph : {:?}", shellgraph);
 
         // turn this into node graph that can be fed into the annotation layer to be executed
         let mut program = shellgraph.convert_into_program()?;
+        println!("raw shell program : {:?}", program);
 
         // apply the parser
         // note: involves interpreting * for JUST parallelizable arguments
@@ -106,6 +108,7 @@ impl Interpreter {
         self.resolve_filestreams(&mut program)?;
         // apply location algorithm
         self.assign_program_location(&mut program)?;
+        println!("program: {:?}", program);
         Ok(program)
     }
 

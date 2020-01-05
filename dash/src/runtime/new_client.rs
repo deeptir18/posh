@@ -102,7 +102,7 @@ impl ShellClient {
                 Ok(res) => match res {
                     Ok(_) => {}
                     Err(e) => {
-                        bail!("One thread had an error: {:?}", e);
+                        bail!("One SETUP thread had an error: {:?}", e);
                     }
                 },
                 Err(e) => {
@@ -135,7 +135,7 @@ impl ShellClient {
                 Ok(res) => match res {
                     Ok(_) => {}
                     Err(e) => {
-                        bail!("One execution thread had an error: {:?}", e);
+                        bail!("One Execution thread had an error: {:?}", e);
                     }
                 },
                 Err(e) => {
@@ -155,14 +155,6 @@ impl ShellClient {
                 bail!("Could not split given program: {:?}", e);
             }
         };
-        println!("printing program map");
-
-        for (loc, prog) in program_map.iter() {
-            println!("loc: {:?}", loc);
-            println!("program: {:?}", prog);
-        }
-
-        println!("done printing program map");
 
         // client needs a shared stream map for handling copying standard in to nodes,
         // for the portions of the graph *it needs to execute*
@@ -223,6 +215,7 @@ fn run_stream_setup(
             Ok(())
         }
         Location::Server(ip) => {
+            println!("setup thread to {:?}", ip);
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
             let info = rpc::NetworkStreamInfo {
@@ -270,6 +263,7 @@ fn execute_subprogram(
             prog.execute(shared_stream_map)
         }
         Location::Server(ip) => {
+            println!("asking {:?} to execute subprogram", ip);
             // send a request to the server to execute this subprogram
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
