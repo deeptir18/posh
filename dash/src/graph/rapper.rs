@@ -135,6 +135,7 @@ where
             },
         }
     }
+    println!("returning from this terrible function for idx {:?}", idx);
 
     Ok(0)
 }
