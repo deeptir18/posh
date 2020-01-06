@@ -818,7 +818,6 @@ fn copy_into_stdin(
             if metadata.current() > idx {
                 continue;
             }
-            println!("Dealing with copying stream: {:?}", stream);
             match stream {
                 DashStream::Tcp(netstream) => {
                     let mut tcpstream = match network_connections.remove(&netstream) {
