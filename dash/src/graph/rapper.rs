@@ -70,12 +70,15 @@ where
         // if we haven't yet
         if !metadata.get_finished_tmp(idx) {
             let mut tmpfile = &tmp_handles[idx];
-            println!("node {:?}, copying from tmpfile into writer", node_id);
-            let _ = copy_wrapper(&mut tmpfile, writer)?;
-            println!(
-                "node {:?}, finished copying from tmpfile into writer",
-                node_id
-            );
+            let file_metadata = tmpfile.metadata()?;
+            if file_metadata.len() > 0 {
+                println!("node {:?}, copying from tmpfile into writer", node_id);
+                let _ = copy_wrapper(&mut tmpfile, writer)?;
+                println!(
+                    "node {:?}, finished copying from tmpfile into writer",
+                    node_id
+                );
+            }
             metadata.set_finished_tmp(idx);
         }
         if metadata.finished(idx) {
