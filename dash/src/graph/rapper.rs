@@ -112,7 +112,6 @@ where
                 metadata.increment_bytes(idx, s as u64);
                 tmpfile.write(&mut buf)?;
                 if s == 0 {
-                    println!("finished {:?}", idx);
                     metadata.set_finished(idx);
                 }
             }
