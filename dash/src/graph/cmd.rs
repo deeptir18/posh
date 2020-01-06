@@ -812,82 +812,84 @@ fn copy_into_stdin(
         stdin_streams.len()
     );
 
-    for (idx, stream) in stdin_streams.iter().enumerate() {
-        // optimization: the output of this stream has already been copied
-        if metadata.current() > idx {
-            continue;
-        }
-        println!("Dealing with copying stream: {:?}", stream);
-        match stream {
-            DashStream::Tcp(netstream) => {
-                let mut tcpstream = match network_connections.remove(&netstream) {
-                    Ok(s) => s,
-                    Err(e) => bail!(
-                        "Failed to find tcp stream with info {:?}: {:?}",
-                        netstream,
-                        e
-                    ),
-                };
-                iterating_redirect(
-                    &mut tcpstream,
-                    &mut stdin_handle,
-                    &mut metadata,
-                    idx,
-                    &mut tmp_handles,
-                    node_id,
-                )?;
-                // insert back into shared map for next iteration of the loop
-                network_connections.insert(netstream.clone(), tcpstream)?;
+    while metadata.current() < stdin_streams.len() {
+        for (idx, stream) in stdin_streams.iter().enumerate() {
+            // optimization: the output of this stream has already been copied
+            if metadata.current() > idx {
+                continue;
             }
-            DashStream::Pipe(pipestream) => {
-                let handle_identifier = HandleIdentifier::new(
-                    prog_id,
-                    pipestream.get_left(),
-                    pipestream.get_output_type(),
-                );
-                let prev_handle = match pipes.remove(&handle_identifier) {
-                    Ok(s) => s,
-                    Err(e) => bail!(
-                        "Failed to find handle with info {:?}: {:?}",
-                        handle_identifier,
-                        e
-                    ),
-                };
-                let prev_handle_copy = match pipestream.get_output_type() {
-                    IOType::Stdout => {
-                        let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
-                        let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
-                        iterating_redirect(
-                            &mut prev_stdout_handle,
-                            &mut stdin_handle,
-                            &mut metadata,
-                            idx,
-                            &mut tmp_handles,
-                            node_id,
-                        )?;
-                        OutputHandle::Stdout(prev_stdout_handle)
-                    }
-                    IOType::Stderr => {
-                        let prev_stderr_handle_option: Option<ChildStderr> = prev_handle.into();
-                        let mut prev_stderr_handle = prev_stderr_handle_option.unwrap();
-                        iterating_redirect(
-                            &mut prev_stderr_handle,
-                            &mut stdin_handle,
-                            &mut metadata,
-                            idx,
-                            &mut tmp_handles,
-                            node_id,
-                        )?;
-                        OutputHandle::Stderr(prev_stderr_handle)
-                    }
-                    IOType::Stdin => {
-                        bail!("Pipestream should not have type of Stdin: {:?}", pipestream);
-                    }
-                };
-                pipes.insert(handle_identifier, prev_handle_copy)?;
-            }
-            _ => {
-                bail!("Command stdin should not have stdout or file stream types in input stream list.");
+            println!("Dealing with copying stream: {:?}", stream);
+            match stream {
+                DashStream::Tcp(netstream) => {
+                    let mut tcpstream = match network_connections.remove(&netstream) {
+                        Ok(s) => s,
+                        Err(e) => bail!(
+                            "Failed to find tcp stream with info {:?}: {:?}",
+                            netstream,
+                            e
+                        ),
+                    };
+                    iterating_redirect(
+                        &mut tcpstream,
+                        &mut stdin_handle,
+                        &mut metadata,
+                        idx,
+                        &mut tmp_handles,
+                        node_id,
+                    )?;
+                    // insert back into shared map for next iteration of the loop
+                    network_connections.insert(netstream.clone(), tcpstream)?;
+                }
+                DashStream::Pipe(pipestream) => {
+                    let handle_identifier = HandleIdentifier::new(
+                        prog_id,
+                        pipestream.get_left(),
+                        pipestream.get_output_type(),
+                    );
+                    let prev_handle = match pipes.remove(&handle_identifier) {
+                        Ok(s) => s,
+                        Err(e) => bail!(
+                            "Failed to find handle with info {:?}: {:?}",
+                            handle_identifier,
+                            e
+                        ),
+                    };
+                    let prev_handle_copy = match pipestream.get_output_type() {
+                        IOType::Stdout => {
+                            let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
+                            let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
+                            iterating_redirect(
+                                &mut prev_stdout_handle,
+                                &mut stdin_handle,
+                                &mut metadata,
+                                idx,
+                                &mut tmp_handles,
+                                node_id,
+                            )?;
+                            OutputHandle::Stdout(prev_stdout_handle)
+                        }
+                        IOType::Stderr => {
+                            let prev_stderr_handle_option: Option<ChildStderr> = prev_handle.into();
+                            let mut prev_stderr_handle = prev_stderr_handle_option.unwrap();
+                            iterating_redirect(
+                                &mut prev_stderr_handle,
+                                &mut stdin_handle,
+                                &mut metadata,
+                                idx,
+                                &mut tmp_handles,
+                                node_id,
+                            )?;
+                            OutputHandle::Stderr(prev_stderr_handle)
+                        }
+                        IOType::Stdin => {
+                            bail!("Pipestream should not have type of Stdin: {:?}", pipestream);
+                        }
+                    };
+                    pipes.insert(handle_identifier, prev_handle_copy)?;
+                }
+                _ => {
+                    bail!("Command stdin should not have stdout or file stream types in input stream list.");
+                }
             }
         }
     }

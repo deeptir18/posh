@@ -55,10 +55,6 @@ where
         metadata.increment_current();
         return Ok(s);
     } else {
-        println!(
-            "Node {:?}, metadata size is LARGER than 1",
-            metadata.get_size()
-        );
     }
 
     // counter should not be GREATER than any idx:
@@ -112,7 +108,7 @@ where
             }
         }
     } else {
-        println!("idx that is greater than current: {:?}", idx);
+        //println!("idx that is greater than current: {:?}", idx);
         let mut tmpfile = &tmp_handles[idx];
         let mut buf = [0u8; READ_BUFFER_SIZE];
         match read_rapper(reader, &mut buf) {
@@ -135,7 +131,7 @@ where
             },
         }
     }
-    println!("returning from this terrible function for idx {:?}", idx);
+    //println!("returning from this terrible function for idx {:?}", idx);
 
     Ok(0)
 }
