@@ -4,10 +4,13 @@ use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{Link, NodeId, ProgId};
+use std::collections::HashMap;
 use std::io::{stderr, stdout};
+use std::net::TcpStream;
 use std::slice::IterMut;
 use stream::{
-    DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
+    DashStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream, SharedPipeMap,
+    SharedStreamMap,
 };
 /// Node that writes stdin to a specified file.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
@@ -226,115 +229,128 @@ impl Rapper for WriteNode {
     ) -> Result<()> {
         let mut metadata = InputStreamMetadata::new(self.node_id, &tmp_folder, self.stdin.len());
         let mut tmp_handles = metadata.open_files()?;
-        println!(
-            "Node {:?} opened {:?} tmpfiles",
-            self.node_id,
-            self.stdin.len()
-        );
+        // now -> we don't do broadcast so there is only 1 output stream per write node
+        let output_stream = match self.output.pop() {
+            Some(os) => os,
+            None => {
+                bail!(
+                    "Write node {:?} does not have an output stream",
+                    self.node_id
+                );
+            }
+        };
 
+        // pop all the individual streams so we don't need to access the shared hashmap again
+        let mut input_pipestreams: HashMap<usize, OutputHandle> = HashMap::default();
+        let mut input_tcpstreams: HashMap<usize, TcpStream> = HashMap::default();
+        for (idx, input_stream) in self.stdin.iter().enumerate() {
+            match input_stream {
+                DashStream::Tcp(netstream) => {
+                    let tcpstream = network_connections.remove(&netstream)?;
+                    input_tcpstreams.insert(idx, tcpstream);
+                }
+                DashStream::Pipe(pipestream) => {
+                    let handle_identifier = HandleIdentifier::new(
+                        self.prog_id,
+                        pipestream.get_left(),
+                        pipestream.get_output_type(),
+                    );
+                    let output_handle = pipes.remove(&handle_identifier)?;
+                    input_pipestreams.insert(idx, output_handle);
+                }
+                _ => {
+                    bail!("Write node should not see input from a file, stdout, or stderr handle: {:?}", input_stream);
+                }
+            }
+        }
         while metadata.current() < self.stdin.len() {
-            for output_stream in self.output.iter() {
-                while metadata.current() < self.stdin.len() {
-                    for (idx, stream) in self.stdin.iter().enumerate() {
-                        // optimization: the output of this stream has already been copied,
-                        // so can skip
-                        if metadata.current() > idx {
-                            continue;
-                        }
+            for (idx, stream) in self.stdin.iter().enumerate() {
+                // optimization: the output of this stream has already been copied
+                if metadata.current() > idx {
+                    continue;
+                }
 
-                        match stream {
-                            DashStream::Tcp(netstream) => {
-                                let mut tcpstream = network_connections.remove(&netstream)?;
-                                match output_stream {
-                                    DashStream::File(filestream) => {
-                                        let mut file_handle = filestream.open()?;
-                                        iterating_redirect(
-                                            &mut tcpstream,
-                                            &mut file_handle,
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    DashStream::Stdout => {
-                                        iterating_redirect(
-                                            &mut tcpstream,
-                                            &mut stdout(),
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    DashStream::Stderr => {
-                                        iterating_redirect(
-                                            &mut tcpstream,
-                                            &mut stderr(),
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    _ => {
-                                        bail!("Output stream is not of type file, stdout or stderr handle: {:?}", output_stream);
-                                    }
-                                }
-                                // insert the tcpstream back into the map for later use by the loop
-                                network_connections.insert(netstream.clone(), tcpstream)?;
+                match stream {
+                    DashStream::Tcp(_netstream) => {
+                        let mut tcpstream = input_tcpstreams.get_mut(&idx).unwrap();
+                        match output_stream.clone() {
+                            DashStream::File(filestream) => {
+                                let mut file_handle = filestream.open()?;
+                                iterating_redirect(
+                                    &mut tcpstream,
+                                    &mut file_handle,
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
                             }
-                            DashStream::Pipe(pipestream) => {
-                                let handle_identifier = HandleIdentifier::new(
-                                    self.prog_id,
-                                    pipestream.get_left(),
-                                    pipestream.get_output_type(),
-                                );
-                                let mut output_handle = pipes.remove(&handle_identifier)?;
-
-                                match output_stream {
-                                    DashStream::File(filestream) => {
-                                        let mut file_handle = filestream.open()?;
-                                        iterating_redirect(
-                                            &mut output_handle,
-                                            &mut file_handle,
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    DashStream::Stdout => {
-                                        iterating_redirect(
-                                            &mut output_handle,
-                                            &mut stdout(),
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    DashStream::Stderr => {
-                                        iterating_redirect(
-                                            &mut output_handle,
-                                            &mut stderr(),
-                                            &mut metadata,
-                                            idx,
-                                            &mut tmp_handles,
-                                            self.node_id,
-                                        )?;
-                                    }
-                                    _ => {
-                                        bail!("Output stream is not of type file, stdout or stderr handle: {:?}", output_stream);
-                                    }
-                                }
-                                // insert the output handle BACK into the map for later use by the loop
-                                pipes.insert(handle_identifier.clone(), output_handle)?;
+                            DashStream::Stdout => {
+                                iterating_redirect(
+                                    &mut tcpstream,
+                                    &mut stdout(),
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
+                            }
+                            DashStream::Stderr => {
+                                iterating_redirect(
+                                    &mut tcpstream,
+                                    &mut stderr(),
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
                             }
                             _ => {
-                                bail!("Write node should not see input from a file, stdout, or stderr handle: {:?}", stream);
+                                bail!("Output stream is not of type file, stdout or stderr handle: {:?}", output_stream);
                             }
                         }
+                    }
+                    DashStream::Pipe(_pipestream) => {
+                        let mut output_handle = input_pipestreams.get_mut(&idx).unwrap();
+                        match output_stream.clone() {
+                            DashStream::File(filestream) => {
+                                let mut file_handle = filestream.open()?;
+                                iterating_redirect(
+                                    &mut output_handle,
+                                    &mut file_handle,
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
+                            }
+                            DashStream::Stdout => {
+                                iterating_redirect(
+                                    &mut output_handle,
+                                    &mut stdout(),
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
+                            }
+                            DashStream::Stderr => {
+                                iterating_redirect(
+                                    &mut output_handle,
+                                    &mut stderr(),
+                                    &mut metadata,
+                                    idx,
+                                    &mut tmp_handles,
+                                    self.node_id,
+                                )?;
+                            }
+                            _ => {
+                                bail!("Output stream is not of type file, stdout or stderr handle: {:?}", output_stream);
+                            }
+                        }
+                    }
+                    _ => {
+                        bail!("Write node should not see input from a file, stdout, or stderr handle: {:?}", stream);
                     }
                 }
             }

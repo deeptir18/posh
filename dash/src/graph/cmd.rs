@@ -5,6 +5,8 @@ use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{Link, NodeId, ProgId};
+use std::collections::HashMap;
+use std::net::TcpStream;
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::slice::IterMut;
 use std::thread;
@@ -806,11 +808,32 @@ fn copy_into_stdin(
     let stdin_handle_option: Option<ChildStdin> = handle.into();
     let mut stdin_handle = stdin_handle_option.unwrap();
     let mut tmp_handles = metadata.open_files()?;
-    println!(
-        "Node {:?} opened {:?} tmpfiles",
-        node_id,
-        stdin_streams.len()
-    );
+    // pop all the individual streams so we don't need to access the shared hashmap again
+    let mut input_pipestreams: HashMap<usize, OutputHandle> = HashMap::default();
+    let mut input_tcpstreams: HashMap<usize, TcpStream> = HashMap::default();
+    for (idx, input_stream) in stdin_streams.iter().enumerate() {
+        match input_stream {
+            DashStream::Tcp(netstream) => {
+                let tcpstream = network_connections.remove(&netstream)?;
+                input_tcpstreams.insert(idx, tcpstream);
+            }
+            DashStream::Pipe(pipestream) => {
+                let handle_identifier = HandleIdentifier::new(
+                    prog_id,
+                    pipestream.get_left(),
+                    pipestream.get_output_type(),
+                );
+                let output_handle = pipes.remove(&handle_identifier)?;
+                input_pipestreams.insert(idx, output_handle);
+            }
+            _ => {
+                bail!(
+                    "Cmd node should not see input from a file, stdout, or stderr handle: {:?}",
+                    input_stream
+                );
+            }
+        }
+    }
 
     while metadata.current() < stdin_streams.len() {
         for (idx, stream) in stdin_streams.iter().enumerate() {
@@ -819,15 +842,8 @@ fn copy_into_stdin(
                 continue;
             }
             match stream {
-                DashStream::Tcp(netstream) => {
-                    let mut tcpstream = match network_connections.remove(&netstream) {
-                        Ok(s) => s,
-                        Err(e) => bail!(
-                            "Failed to find tcp stream with info {:?}: {:?}",
-                            netstream,
-                            e
-                        ),
-                    };
+                DashStream::Tcp(_netstream) => {
+                    let mut tcpstream = input_tcpstreams.get_mut(&idx).unwrap();
                     iterating_redirect(
                         &mut tcpstream,
                         &mut stdin_handle,
@@ -836,55 +852,18 @@ fn copy_into_stdin(
                         &mut tmp_handles,
                         node_id,
                     )?;
-                    // insert back into shared map for next iteration of the loop
-                    network_connections.insert(netstream.clone(), tcpstream)?;
                 }
-                DashStream::Pipe(pipestream) => {
-                    let handle_identifier = HandleIdentifier::new(
-                        prog_id,
-                        pipestream.get_left(),
-                        pipestream.get_output_type(),
-                    );
-                    let prev_handle = match pipes.remove(&handle_identifier) {
-                        Ok(s) => s,
-                        Err(e) => bail!(
-                            "Failed to find handle with info {:?}: {:?}",
-                            handle_identifier,
-                            e
-                        ),
-                    };
-                    let prev_handle_copy = match pipestream.get_output_type() {
-                        IOType::Stdout => {
-                            let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
-                            let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
-                            iterating_redirect(
-                                &mut prev_stdout_handle,
-                                &mut stdin_handle,
-                                &mut metadata,
-                                idx,
-                                &mut tmp_handles,
-                                node_id,
-                            )?;
-                            OutputHandle::Stdout(prev_stdout_handle)
-                        }
-                        IOType::Stderr => {
-                            let prev_stderr_handle_option: Option<ChildStderr> = prev_handle.into();
-                            let mut prev_stderr_handle = prev_stderr_handle_option.unwrap();
-                            iterating_redirect(
-                                &mut prev_stderr_handle,
-                                &mut stdin_handle,
-                                &mut metadata,
-                                idx,
-                                &mut tmp_handles,
-                                node_id,
-                            )?;
-                            OutputHandle::Stderr(prev_stderr_handle)
-                        }
-                        IOType::Stdin => {
-                            bail!("Pipestream should not have type of Stdin: {:?}", pipestream);
-                        }
-                    };
-                    pipes.insert(handle_identifier, prev_handle_copy)?;
+                DashStream::Pipe(_pipestream) => {
+                    let mut prev_handle = input_pipestreams.get_mut(&idx).unwrap();
+                    // TODO: is this necessary?
+                    iterating_redirect(
+                        &mut prev_handle,
+                        &mut stdin_handle,
+                        &mut metadata,
+                        idx,
+                        &mut tmp_handles,
+                        node_id,
+                    )?;
                 }
                 _ => {
                     bail!("Command stdin should not have stdout or file stream types in input stream list.");
