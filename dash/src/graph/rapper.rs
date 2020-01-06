@@ -33,22 +33,32 @@ pub fn iterating_redirect<R: ?Sized, W: ?Sized>(
     metadata: &mut InputStreamMetadata,
     idx: usize,
     tmp_handles: &mut Vec<File>,
+    node_id: NodeId,
 ) -> Result<u64>
 where
     R: Read,
     W: Write,
 {
-    println!("entering iterating_redirect for {:?}", metadata);
+    println!(
+        "entering iterating_redirect for {:?}, NodeId {:?}",
+        metadata, node_id
+    );
     // optimization: if there is one input stream,
     // directly copy from the reader to the writer
     // and increment the count
     if metadata.get_size() == 1 {
+        println!("In case where metadata size is 1 for node {:?}", node_id);
         let s = copy_wrapper(reader, writer)?;
+        println!("Node {:?} finished stdin copy", node_id);
         metadata.increment_bytes(0, s);
         metadata.set_finished(0);
         metadata.increment_current();
         return Ok(s);
     } else {
+        println!(
+            "Node {:?}, metadata size is LARGER than 1",
+            metadata.get_size()
+        );
     }
 
     // counter should not be GREATER than any idx:
@@ -58,7 +68,12 @@ where
     if idx == metadata.current() {
         // first, copy everything from the tmp file into the writer
         let mut tmpfile = &tmp_handles[idx];
+        println!("node {:?}, copying from tmpfile into writer", node_id);
         let _ = copy_wrapper(&mut tmpfile, writer)?;
+        println!(
+            "node {:?}, finished copying from tmpfile into writer",
+            node_id
+        );
         if metadata.finished(idx) {
             metadata.increment_current();
         } else {
@@ -69,6 +84,7 @@ where
                     // write it into the tmpfile
                     writer.write(&mut buf)?;
                     if s == 0 {
+                        println!("node id {:?}, id {:?} for stdin finished", node_id, idx);
                         metadata.set_finished(idx);
                         metadata.increment_current();
                     }
@@ -89,6 +105,7 @@ where
             }
         }
     } else {
+        println!("idx that is greater than current: {:?}", idx);
         let mut tmpfile = &tmp_handles[idx];
         let mut buf = [0u8; READ_BUFFER_SIZE];
         match read_rapper(reader, &mut buf) {
@@ -96,6 +113,7 @@ where
                 metadata.increment_bytes(idx, s as u64);
                 tmpfile.write(&mut buf)?;
                 if s == 0 {
+                    println!("finished {:?}", idx);
                     metadata.set_finished(idx);
                 }
             }

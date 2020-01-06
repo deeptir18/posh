@@ -834,6 +834,7 @@ fn copy_into_stdin(
                     &mut metadata,
                     idx,
                     &mut tmp_handles,
+                    node_id,
                 )?;
                 // insert back into shared map for next iteration of the loop
                 network_connections.insert(netstream.clone(), tcpstream)?;
@@ -862,6 +863,7 @@ fn copy_into_stdin(
                             &mut metadata,
                             idx,
                             &mut tmp_handles,
+                            node_id,
                         )?;
                         OutputHandle::Stdout(prev_stdout_handle)
                     }
@@ -874,6 +876,7 @@ fn copy_into_stdin(
                             &mut metadata,
                             idx,
                             &mut tmp_handles,
+                            node_id,
                         )?;
                         OutputHandle::Stderr(prev_stderr_handle)
                     }

@@ -253,6 +253,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 DashStream::Stdout => {
@@ -262,6 +263,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 DashStream::Stderr => {
@@ -271,6 +273,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 _ => {
@@ -297,6 +300,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 DashStream::Stdout => {
@@ -306,6 +310,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 DashStream::Stderr => {
@@ -315,6 +320,7 @@ impl Rapper for WriteNode {
                                         &mut metadata,
                                         idx,
                                         &mut tmp_handles,
+                                        self.node_id,
                                     )?;
                                 }
                                 _ => {
