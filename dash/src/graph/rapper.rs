@@ -67,13 +67,17 @@ where
 
     if idx == metadata.current() {
         // first, copy everything from the tmp file into the writer
-        let mut tmpfile = &tmp_handles[idx];
-        println!("node {:?}, copying from tmpfile into writer", node_id);
-        let _ = copy_wrapper(&mut tmpfile, writer)?;
-        println!(
-            "node {:?}, finished copying from tmpfile into writer",
-            node_id
-        );
+        // if we haven't yet
+        if !metadata.get_finished_tmp(idx) {
+            let mut tmpfile = &tmp_handles[idx];
+            println!("node {:?}, copying from tmpfile into writer", node_id);
+            let _ = copy_wrapper(&mut tmpfile, writer)?;
+            println!(
+                "node {:?}, finished copying from tmpfile into writer",
+                node_id
+            );
+            metadata.set_finished_tmp(idx);
+        }
         if metadata.finished(idx) {
             metadata.increment_current();
         } else {
@@ -142,6 +146,8 @@ pub struct InputStreamMetadata {
     filenames: Vec<PathBuf>,
     /// bytes copied: for extra tracking
     bytes_copied: HashMap<usize, u64>,
+    /// finished_tmp
+    finished_tmp: HashMap<usize, bool>,
 }
 
 impl InputStreamMetadata {
@@ -164,14 +170,23 @@ impl InputStreamMetadata {
         InputStreamMetadata {
             curr: 0,
             size: len_stdin,
-            finished_map: map,
+            finished_map: map.clone(),
             filenames: filenames,
             bytes_copied: bytes_copied,
+            finished_tmp: map,
         }
     }
 
     pub fn get_size(&self) -> usize {
         self.size
+    }
+
+    pub fn get_finished_tmp(&self, idx: usize) -> bool {
+        *self.finished_tmp.get(&idx).unwrap()
+    }
+
+    pub fn set_finished_tmp(&mut self, idx: usize) {
+        *self.finished_tmp.get_mut(&idx).unwrap() = true;
     }
 
     pub fn current(&self) -> usize {
