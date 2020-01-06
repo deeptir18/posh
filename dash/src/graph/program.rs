@@ -204,11 +204,16 @@ impl Rapper for Elem {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        tmp_folder: String,
     ) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.run_redirection(pipes, network_connections),
-            Elem::Read(read_node) => read_node.run_redirection(pipes, network_connections),
-            Elem::Cmd(cmd_node) => cmd_node.run_redirection(pipes, network_connections),
+            Elem::Write(write_node) => {
+                write_node.run_redirection(pipes, network_connections, tmp_folder)
+            }
+            Elem::Read(read_node) => {
+                read_node.run_redirection(pipes, network_connections, tmp_folder)
+            }
+            Elem::Cmd(cmd_node) => cmd_node.run_redirection(pipes, network_connections, tmp_folder),
         }
     }
 
@@ -341,8 +346,10 @@ impl Node {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        tmp_folder: String,
     ) -> Result<()> {
-        self.elem.run_redirection(pipes, network_connections)
+        self.elem
+            .run_redirection(pipes, network_connections, tmp_folder)
     }
 
     pub fn execute(
@@ -1388,7 +1395,7 @@ impl Program {
     /// execute.
     /// when executing the node. Note that if it's a client, folder should be none; no filepaths
     /// need to be resolved.
-    pub fn execute(&mut self, stream_map: SharedStreamMap) -> Result<()> {
+    pub fn execute(&mut self, stream_map: SharedStreamMap, tmp_folder: String) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
         let execution_order = self.execution_order();
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
@@ -1422,10 +1429,11 @@ impl Program {
             let pipe_map_copy = pipe_map.clone();
             let stream_map_copy = stream_map.clone();
             let mut node_clone = node.clone();
+            let tmp = tmp_folder.clone();
             // This call is non-blocking
             println!("about to run redirection for: {:?},", node_id);
             node_threads.push(spawn(move || {
-                node_clone.run_redirection(pipe_map_copy, stream_map_copy)
+                node_clone.run_redirection(pipe_map_copy, stream_map_copy, tmp.to_string())
             }));
             node_thread_ids.push(*node_id);
         }

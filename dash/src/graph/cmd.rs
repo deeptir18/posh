@@ -1,5 +1,6 @@
 use super::rapper::copy_wrapper as copy;
-use super::rapper::{resolve_file_streams, stream_initiate_filter, Rapper};
+use super::rapper::iterating_redirect;
+use super::rapper::{resolve_file_streams, stream_initiate_filter, InputStreamMetadata, Rapper};
 use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
@@ -658,9 +659,11 @@ impl Rapper for CommandNode {
         &mut self,
         mut pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        tmp: String,
     ) -> Result<()> {
         let mut join_handles: Vec<(IOType, JoinHandle<Result<()>>)> = Vec::new();
-        // spawn stdin thread
+        // spawn stdin thread -- this thread internally needs to handle reading and buffering from
+        // different inputs
         if self.stdin.len() > 0 {
             let stdin_prog_id = self.prog_id;
             let stdin_handle = pipes.remove(&self.get_handle_identifier(IOType::Stdin))?;
@@ -682,6 +685,7 @@ impl Rapper for CommandNode {
                         stdin_streams,
                         stdin_pipes,
                         stdin_connections,
+                        tmp,
                     )
                 }),
             ));
@@ -795,16 +799,23 @@ fn copy_into_stdin(
     stdin_streams: Vec<DashStream>,
     mut pipes: SharedPipeMap,
     mut network_connections: SharedStreamMap,
+    tmp_folder: String,
 ) -> Result<()> {
+    let mut metadata = InputStreamMetadata::new(node_id, &tmp_folder, stdin_streams.len());
     println!("In function to copy into stdin for node: {:?}", node_id);
     let stdin_handle_option: Option<ChildStdin> = handle.into();
     let mut stdin_handle = stdin_handle_option.unwrap();
-    for stream in stdin_streams.iter() {
+    let mut tmp_handles = metadata.open_files()?;
+
+    for (idx, stream) in stdin_streams.iter().enumerate() {
+        // optimization: the output of this stream has already been copied
+        if metadata.current() > idx {
+            continue;
+        }
         println!("Dealing with copying stream: {:?}", stream);
         match stream {
             DashStream::Tcp(netstream) => {
-                // TODO: will the type here always be IOType::Stdout?
-                let mut tcp_stream = match network_connections.remove(&netstream) {
+                let mut tcpstream = match network_connections.remove(&netstream) {
                     Ok(s) => s,
                     Err(e) => bail!(
                         "Failed to find tcp stream with info {:?}: {:?}",
@@ -812,18 +823,21 @@ fn copy_into_stdin(
                         e
                     ),
                 };
-
-                copy(&mut tcp_stream, &mut stdin_handle)?;
+                iterating_redirect(
+                    &mut tcpstream,
+                    &mut stdin_handle,
+                    &mut metadata,
+                    idx,
+                    &mut tmp_handles,
+                )?;
+                // insert back into shared map for next iteration of the loop
+                network_connections.insert(netstream.clone(), tcpstream)?;
             }
             DashStream::Pipe(pipestream) => {
                 let handle_identifier = HandleIdentifier::new(
                     prog_id,
                     pipestream.get_left(),
                     pipestream.get_output_type(),
-                );
-                println!(
-                    "Past assertion, looking for handle identifier {:?}",
-                    handle_identifier
                 );
                 let prev_handle = match pipes.remove(&handle_identifier) {
                     Ok(s) => s,
@@ -833,29 +847,39 @@ fn copy_into_stdin(
                         e
                     ),
                 };
-                println!("Found handle for: {:?}", handle_identifier);
-                match pipestream.get_output_type() {
+                let prev_handle_copy = match pipestream.get_output_type() {
                     IOType::Stdout => {
                         let prev_stdout_handle_option: Option<ChildStdout> = prev_handle.into();
                         let mut prev_stdout_handle = prev_stdout_handle_option.unwrap();
-                        println!(
-                            "copying into stdin of cmd node id {:?} with pipestream {:?}",
-                            node_id, pipestream
-                        );
-                        copy(&mut prev_stdout_handle, &mut stdin_handle)?;
+                        iterating_redirect(
+                            &mut prev_stdout_handle,
+                            &mut stdin_handle,
+                            &mut metadata,
+                            idx,
+                            &mut tmp_handles,
+                        )?;
+                        OutputHandle::Stdout(prev_stdout_handle)
                     }
                     IOType::Stderr => {
                         let prev_stderr_handle_option: Option<ChildStderr> = prev_handle.into();
                         let mut prev_stderr_handle = prev_stderr_handle_option.unwrap();
-                        copy(&mut prev_stderr_handle, &mut stdin_handle)?;
+                        iterating_redirect(
+                            &mut prev_stderr_handle,
+                            &mut stdin_handle,
+                            &mut metadata,
+                            idx,
+                            &mut tmp_handles,
+                        )?;
+                        OutputHandle::Stderr(prev_stderr_handle)
                     }
                     IOType::Stdin => {
                         bail!("Pipestream should not have type of Stdin: {:?}", pipestream);
                     }
-                }
+                };
+                pipes.insert(handle_identifier, prev_handle_copy)?;
             }
             _ => {
-                println!("Stdin should not have stdout or file stream types in input stream list.");
+                bail!("Command stdin should not have stdout or file stream types in input stream list.");
             }
         }
     }

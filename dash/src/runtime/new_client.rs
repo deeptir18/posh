@@ -38,10 +38,12 @@ pub struct ShellClient {
     port: String,
     /// Current directory; used to resolve file paths locally in case any commands change.
     pwd: PathBuf,
+    /// Tmp file. File client can use for temporarily storing output of files.
+    tmp: String,
 }
 
 impl ShellClient {
-    pub fn new(server_port: &str, mount_info: &str, pwd: PathBuf) -> Result<Self> {
+    pub fn new(server_port: &str, mount_info: &str, pwd: PathBuf, tmp: &str) -> Result<Self> {
         let mut ret: HashMap<Addr, String> = HashMap::default();
         let file = File::open(mount_info)?;
         let reader = BufReader::new(file);
@@ -60,6 +62,7 @@ impl ShellClient {
             mount_map: ret,
             port: server_port.to_string(),
             pwd: pwd,
+            tmp: tmp.to_string(),
         })
     }
 
@@ -125,8 +128,9 @@ impl ShellClient {
             let program = prog.clone();
             let shared_map_copy = shared_map.clone();
             let port = self.port.clone();
+            let tmp_folder = self.tmp.clone();
             execution_threads.push(thread::spawn(move || {
-                execute_subprogram(location, program, shared_map_copy, port)
+                execute_subprogram(location, program, shared_map_copy, port, tmp_folder)
             }));
         }
 
@@ -210,6 +214,9 @@ fn run_stream_setup(
             }
 
             // the client thread that runs the programs needs access to these streams as well
+            // need to set the reading side of the stream to be nonblocking.
+            // TODO: would need to do this for all the streams
+            stream.set_nonblocking(true)?;
             let clone = stream.try_clone()?;
             map.insert(netstream.clone(), clone)?;
             Ok(())
@@ -254,13 +261,14 @@ fn execute_subprogram(
     mut prog: program::Program,
     shared_stream_map: SharedStreamMap,
     port: String,
+    tmp_folder: String,
 ) -> Result<()> {
     match loc {
         Location::Client => {
             // execute the subprogram
             println!("executing following subprogram locally: {:?}", prog);
             prog.resolve_args("")?; // noop for client
-            prog.execute(shared_stream_map)
+            prog.execute(shared_stream_map, tmp_folder)
         }
         Location::Server(ip) => {
             println!("asking {:?} to execute subprogram", ip);

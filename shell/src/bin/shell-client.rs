@@ -35,6 +35,12 @@ struct Opt {
         help = "File with annotation list."
     )]
     annotation_file: String,
+    #[structopt(
+        short = "tmp",
+        long = "tmpfile",
+        help = "Place to keep temporary stuff"
+    )]
+    tmp_file: String,
 }
 
 fn main() {
@@ -42,6 +48,7 @@ fn main() {
     let runtime_port = opt.runtime_port;
     let mount_file = opt.mount_file;
     let annotation_file = opt.annotation_file;
+    let tmp_file = opt.tmp_file;
 
     let pwd = match current_dir() {
         Ok(p) => p,
@@ -50,7 +57,7 @@ fn main() {
             process::exit(exitcode::USAGE);
         }
     };
-    let mut client = match client::ShellClient::new(&runtime_port, &mount_file, pwd) {
+    let mut client = match client::ShellClient::new(&runtime_port, &mount_file, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(

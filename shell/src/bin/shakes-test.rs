@@ -36,6 +36,12 @@ struct Opt {
         help = "File with annotation list."
     )]
     annotation_file: String,
+    #[structopt(
+        short = "tmp",
+        long = "tmpfile",
+        help = "Place to keep temporary stuff"
+    )]
+    tmp_file: String,
 }
 
 fn main() {
@@ -43,6 +49,7 @@ fn main() {
     let runtime_port = opt.runtime_port;
     let mount_info = opt.mount_file;
     let annotation_file = opt.annotation_file;
+    let tmp_file = opt.tmp_file;
 
     let pwd = match current_dir() {
         Ok(p) => p,
@@ -52,7 +59,7 @@ fn main() {
         }
     };
 
-    let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd) {
+    let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
             eprintln!(

@@ -3,24 +3,257 @@ use super::stream;
 use super::Location;
 use super::Result;
 use failure::bail;
+use std::collections::HashMap;
+use std::fs::{remove_file, File};
 use std::io::ErrorKind;
 use std::io::{copy, Read, Write};
+use std::path::{Path, PathBuf};
+use std::{thread, time};
 use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
 
+const READ_BUFFER_SIZE: usize = 4096;
+
+fn get_filename(node_id: NodeId, stdin_idx: usize) -> String {
+    format!("{}_{:?}.tmp", node_id, stdin_idx)
+}
+
+/// Run redirection from reader to writer, interfacing with tmp file if necessary.
+/// reader: the input stream
+/// writer: the output stream
+/// metadata: information about which streams have finished
+/// idx: the index of this input reader
+/// tmp_handles: vector of temporary file handles
+/// NOTE: important for this function to always call increment_current() on metadata whenever a
+/// stream finishes
+/// TODO: finish this function
+/// Also need to handle the nonblocking error for the tcp stream
+pub fn iterating_redirect<R: ?Sized, W: ?Sized>(
+    reader: &mut R,
+    writer: &mut W,
+    metadata: &mut InputStreamMetadata,
+    idx: usize,
+    tmp_handles: &mut Vec<File>,
+) -> Result<u64>
+where
+    R: Read,
+    W: Write,
+{
+    // optimization: if there is one input stream,
+    // directly copy from the reader to the writer
+    // and increment the count
+    if metadata.get_size() == 1 {
+        let s = copy_wrapper(reader, writer)?;
+        metadata.increment_bytes(0, s);
+        metadata.set_finished(0);
+        metadata.increment_current();
+        return Ok(s);
+    } else {
+    }
+
+    // counter should not be GREATER than any idx:
+    // otherwise this function would have not been called
+    assert!(metadata.current_mut() <= idx);
+
+    if idx == metadata.current() {
+        // first, copy everything from the tmp file into the writer
+        let mut tmpfile = &tmp_handles[idx];
+        let _ = copy_wrapper(&mut tmpfile, writer)?;
+        if metadata.finished(idx) {
+            metadata.increment_current();
+        } else {
+            let mut buf = [0u8; READ_BUFFER_SIZE];
+            match read_rapper(reader, &mut buf) {
+                Ok(s) => {
+                    metadata.increment_bytes(idx, s as u64);
+                    // write it into the tmpfile
+                    writer.write(&mut buf)?;
+                    if s == 0 {
+                        metadata.set_finished(idx);
+                        metadata.increment_current();
+                    }
+                }
+                Err(e) => {
+                    match e.kind() {
+                        // since TCP stream is not blocking -- need to check if nothing is
+                        // available on this thread and check back
+                        ErrorKind::WouldBlock => {
+                            let sleep_duration = time::Duration::from_millis(10);
+                            thread::sleep(sleep_duration);
+                        }
+                        _ => {
+                            bail!("Failed reading stdin on stream {:?}: {:?}", idx, e);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        let mut tmpfile = &tmp_handles[idx];
+        let mut buf = [0u8; READ_BUFFER_SIZE];
+        match read_rapper(reader, &mut buf) {
+            Ok(s) => {
+                metadata.increment_bytes(idx, s as u64);
+                tmpfile.write(&mut buf)?;
+                if s == 0 {
+                    metadata.set_finished(idx);
+                }
+            }
+            Err(e) => match e.kind() {
+                ErrorKind::WouldBlock => {
+                    let sleep_duration = time::Duration::from_millis(10);
+                    thread::sleep(sleep_duration);
+                }
+                _ => {
+                    bail!("Failed reading stdin on stream {:?}: {:?}", idx, e);
+                }
+            },
+        }
+    }
+
+    Ok(0)
+}
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct InputStreamMetadata {
+    curr: usize,
+    /// current input stream we are copying from
+    size: usize,
+    /// the length of the stdin stream list
+    finished_map: HashMap<usize, bool>,
+    /// is this index stream finished or not?
+    filenames: Vec<PathBuf>,
+    /// bytes copied: for extra tracking
+    bytes_copied: HashMap<usize, u64>,
+}
+
+impl InputStreamMetadata {
+    /// Create a new metadata object about the current node.
+    pub fn new(node_id: NodeId, tmp_folder: &str, len_stdin: usize) -> Self {
+        let folder = Path::new(tmp_folder);
+        let mut filenames: Vec<PathBuf> = Vec::new();
+        let mut map: HashMap<usize, bool> = HashMap::default();
+        let mut bytes_copied: HashMap<usize, u64> = HashMap::default();
+        for i in 0..len_stdin {
+            // the format for temporary files. could change later.
+            let path = get_filename(node_id, i);
+            let mut filename = folder.to_path_buf();
+            filename.push(Path::new(&path));
+            map.insert(i, false);
+            bytes_copied.insert(i, 0);
+            filenames.push(filename.to_path_buf());
+        }
+
+        InputStreamMetadata {
+            curr: 0,
+            size: len_stdin,
+            finished_map: map,
+            filenames: filenames,
+            bytes_copied: bytes_copied,
+        }
+    }
+
+    pub fn get_size(&self) -> usize {
+        self.size
+    }
+
+    pub fn current(&self) -> usize {
+        self.curr
+    }
+
+    pub fn current_mut(&mut self) -> usize {
+        self.curr
+    }
+
+    pub fn increment_current(&mut self) {
+        self.curr += 1;
+    }
+
+    pub fn increment_bytes(&mut self, idx: usize, bytes: u64) {
+        let counter = self.bytes_copied.get_mut(&idx).unwrap();
+        *counter += bytes;
+    }
+
+    pub fn finished(&self, id: usize) -> bool {
+        *self.finished_map.get(&id).unwrap()
+    }
+
+    pub fn set_finished(&mut self, id: usize) {
+        *self.finished_map.get_mut(&id).unwrap() = true;
+    }
+
+    pub fn get_filename(&self, id: usize) -> PathBuf {
+        self.filenames[id].clone()
+    }
+
+    /// Returns a vector of filehandles for the temporary files.
+    /// Note that IFF there is one input stream -> returns an empty vector,
+    /// as the implementation will never actually use the temporary file.
+    pub fn open_files(&self) -> Result<Vec<File>> {
+        let mut ret: Vec<File> = Vec::new();
+        if self.filenames.len() > 1 {
+            for filename in self.filenames.iter() {
+                let file = File::create(filename.as_path())?;
+                ret.push(file);
+            }
+        }
+        Ok(ret)
+    }
+
+    /// Remove the temporary files.
+    pub fn remove_files(&self) -> Result<()> {
+        if self.filenames.len() > 1 {
+            for filename in self.filenames.iter() {
+                remove_file(filename.as_path())?;
+            }
+        }
+        Ok(())
+    }
+}
 /// Dash wrapper for copy that catches pipe close errors.
 pub fn copy_wrapper<R: ?Sized, W: ?Sized>(reader: &mut R, writer: &mut W) -> Result<u64>
 where
     R: Read,
     W: Write,
 {
-    match copy(reader, writer) {
+    let finished: bool = false;
+    while !finished {
+        match copy(reader, writer) {
+            Ok(s) => {
+                return Ok(s);
+            }
+            Err(e) => match e.kind() {
+                ErrorKind::BrokenPipe => {
+                    return Ok(0);
+                }
+                ErrorKind::ConnectionAborted => {
+                    return Ok(0);
+                }
+                ErrorKind::WouldBlock => {
+                    // sleep and try again
+                    // ideally, set the underlying writer to just be blocking
+                    // this function is only called in settings where it's safe to block
+                    let sleep_duration = time::Duration::from_millis(10);
+                    thread::sleep(sleep_duration);
+                }
+                _ => {
+                    bail!("{:?}", e);
+                }
+            },
+        }
+    }
+    Ok(0)
+}
+
+/// Dash wrapper for copy that catches pipe close and connection aborted errors.
+pub fn read_rapper<R: ?Sized>(reader: &mut R, buf: &mut [u8]) -> std::io::Result<usize>
+where
+    R: Read,
+{
+    match reader.read(buf) {
         Ok(s) => Ok(s),
         Err(e) => match e.kind() {
             ErrorKind::BrokenPipe => Ok(0),
             ErrorKind::ConnectionAborted => Ok(0),
-            _ => {
-                bail!("{:?}", e);
-            }
+            _ => Err(e),
         },
     }
 }
@@ -108,6 +341,7 @@ pub trait Rapper {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        tmp_folder: String,
     ) -> Result<()>;
 
     fn get_loc(&self) -> Location;

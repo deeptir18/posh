@@ -24,6 +24,8 @@ struct Opt {
     runtime_port: String,
     #[structopt(short = "debug", long = "debug")]
     debug: bool,
+    #[structopt(short = "tmp", long = "tmpfile")]
+    tmp_file: String,
 }
 
 fn main() {
@@ -32,6 +34,7 @@ fn main() {
     let debug: bool = opt.debug;
     let ip_addr = opt.ip_addr;
     let client_folder = opt.client_folder;
+    let tmp_file = opt.tmp_file;
     let mut client_map: HashMap<IpAddr, String> = HashMap::default();
     // local loopback
     let addr = match Ipv4Addr::from_str(&ip_addr) {
@@ -42,5 +45,5 @@ fn main() {
         }
     };
     client_map.insert(IpAddr::V4(addr), client_folder.clone());
-    dash::start_runtime(&runtime_port, client_map, debug);
+    dash::start_runtime(&runtime_port, client_map, debug, &tmp_file);
 }

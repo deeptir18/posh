@@ -45,6 +45,12 @@ struct Opt {
         help = "Working directory to run this script"
     )]
     pwd: String,
+    #[structopt(
+        short = "tmp",
+        long = "tmpfile",
+        help = "Place to keep temporary stuff"
+    )]
+    tmp_file: String,
 }
 
 fn main() {
@@ -54,6 +60,7 @@ fn main() {
     let annotation_file = opt.annotation_file;
     let runtime_port = opt.runtime_port;
     let given_pwd = opt.pwd;
+    let tmp_file = opt.tmp_file;
     let mut pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
@@ -66,13 +73,14 @@ fn main() {
         pwd = Path::new(&given_pwd).to_path_buf();
     }
 
-    let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd.clone()) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to construct a shell with given mount file: {:?}", e);
-            exit(exitcode::USAGE);
-        }
-    };
+    let mut client =
+        match client::ShellClient::new(&runtime_port, &mount_info, pwd.clone(), &tmp_file) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to construct a shell with given mount file: {:?}", e);
+                exit(exitcode::USAGE);
+            }
+        };
 
     let mut interpreter = match interpreter::Interpreter::new(&annotation_file, &mount_info) {
         Ok(i) => i,

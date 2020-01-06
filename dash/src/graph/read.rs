@@ -140,6 +140,7 @@ impl Rapper for ReadNode {
         &mut self,
         mut pipes: SharedPipeMap,
         mut network_connections: SharedStreamMap,
+        _tmp_folder: String,
     ) -> Result<()> {
         for input_stream in self.input.iter() {
             for stream in self.stdout.iter() {

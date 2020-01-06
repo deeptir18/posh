@@ -20,11 +20,18 @@ pub struct ServerRuntime {
     client_map: ClientMap,
     client_stream_map: ClientStreamMap,
     debug: bool,
+    tmp: String,
 }
 
 impl ServerRuntime {
     /// Constructs a new server runtime with the given public IP, port, and ClientMap.
-    pub fn new(ip: &str, port: &str, client_map: ClientMap, debug: bool) -> Result<Self> {
+    pub fn new(
+        ip: &str,
+        port: &str,
+        client_map: ClientMap,
+        debug: bool,
+        tmp: &str,
+    ) -> Result<Self> {
         for (_, folder) in client_map.iter() {
             fs::create_dir_all(folder)?;
         }
@@ -35,6 +42,7 @@ impl ServerRuntime {
             client_map: client_map,
             client_stream_map: new_client_stream_map,
             debug: debug,
+            tmp: tmp.to_string(),
         })
     }
 
@@ -86,8 +94,15 @@ impl Server for ServerRuntime {
                     let stream_map = self.get_stream_map(peer_addr.clone());
                     let server_name = self.server_name();
                     let debug = self.debug.clone();
+                    let tmp = self.tmp.clone();
                     thread::spawn(move || {
-                        match handle_spawned_client(s, folder_result, stream_map, debug.clone()) {
+                        match handle_spawned_client(
+                            s,
+                            folder_result,
+                            stream_map,
+                            debug.clone(),
+                            tmp,
+                        ) {
                             Ok(_) => {
                                 println!(
                                     "{}: Successfully handled request from {}",
@@ -123,6 +138,7 @@ fn handle_spawned_client(
     folder_result: Result<String>,
     mut stream_map: SharedStreamMap,
     _debug: bool,
+    tmp_folder: String,
 ) -> Result<()> {
     let folder = match folder_result {
         Ok(f) => f,
@@ -168,7 +184,7 @@ fn handle_spawned_client(
             // all the streams must be setup for this part of the program,
             // so execute the program!
             program.resolve_args(&folder)?;
-            let response = match program.execute(stream_map) {
+            let response = match program.execute(stream_map, tmp_folder) {
                 Ok(_) => serialize(&rpc::ClientReturnCode::Success)?,
                 Err(e) => {
                     println!("Could not execute program because {:?}", e);

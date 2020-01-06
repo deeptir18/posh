@@ -10,5 +10,5 @@ fn main() {
         "/home/deeptir/research/fs_project/client_folders/remote".to_string(),
     );
     let runtime_port = "1234";
-    dash::start_runtime(runtime_port, client_map, true);
+    dash::start_runtime(runtime_port, client_map, true, "/tmp");
 }
