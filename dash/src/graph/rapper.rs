@@ -53,19 +53,19 @@ where
     } else {
     }
 
-    // counter should not be GREATER than any idx:
-    // otherwise this function would have not been called
-    assert!(metadata.current_mut() <= idx);
-
     if idx == metadata.current() {
         // first, copy everything from the tmp file into the writer
         // if we haven't yet
         if !metadata.get_finished_tmp(idx) {
-            let mut tmpfile = &tmp_handles[idx];
+            let tmpfile = &tmp_handles[idx];
             let file_metadata = tmpfile.metadata()?;
             if file_metadata.len() > 0 {
-                println!("node {:?}, copying from tmpfile into writer", node_id);
-                let _ = copy_wrapper(&mut tmpfile, writer)?;
+                let mut new_tmpfile_handle = File::open(metadata.get_filename(idx).as_path())?;
+                println!(
+                    "node {:?}, copying from tmpfile into writer for idx {:?}",
+                    node_id, idx
+                );
+                let _ = copy_wrapper(&mut new_tmpfile_handle, writer)?;
                 println!(
                     "node {:?}, finished copying from tmpfile into writer",
                     node_id
