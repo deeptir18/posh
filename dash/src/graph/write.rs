@@ -226,6 +226,11 @@ impl Rapper for WriteNode {
     ) -> Result<()> {
         let mut metadata = InputStreamMetadata::new(self.node_id, &tmp_folder, self.stdin.len());
         let mut tmp_handles = metadata.open_files()?;
+        println!(
+            "Node {:?} opened {:?} tmpfiles",
+            self.node_id,
+            self.stdin.len()
+        );
 
         for output_stream in self.output.iter() {
             while metadata.current() < self.stdin.len() {

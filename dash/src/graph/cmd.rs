@@ -806,6 +806,11 @@ fn copy_into_stdin(
     let stdin_handle_option: Option<ChildStdin> = handle.into();
     let mut stdin_handle = stdin_handle_option.unwrap();
     let mut tmp_handles = metadata.open_files()?;
+    println!(
+        "Node {:?} opened {:?} tmpfiles",
+        node_id,
+        stdin_streams.len()
+    );
 
     for (idx, stream) in stdin_streams.iter().enumerate() {
         // optimization: the output of this stream has already been copied

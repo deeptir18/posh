@@ -38,6 +38,7 @@ where
     R: Read,
     W: Write,
 {
+    println!("entering iterating_redirect for {:?}", metadata);
     // optimization: if there is one input stream,
     // directly copy from the reader to the writer
     // and increment the count
