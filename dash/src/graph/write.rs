@@ -310,8 +310,14 @@ impl Rapper for WriteNode {
                             }
                         }
                     }
-                    DashStream::Pipe(_pipestream) => {
+                    DashStream::Pipe(pipestream) => {
                         let mut output_handle = input_pipestreams.get_mut(&idx).unwrap();
+                        if self.stdin.len() == 1 {
+                            println!(
+                                "Running write stdin function for node {:?} for pipe {:?}",
+                                self.node_id, pipestream
+                            );
+                        }
                         match output_stream.clone() {
                             DashStream::File(filestream) => {
                                 let mut file_handle = filestream.open()?;

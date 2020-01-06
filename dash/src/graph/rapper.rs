@@ -43,7 +43,7 @@ where
     // directly copy from the reader to the writer
     // and increment the count
     if metadata.get_size() == 1 {
-        println!("In case where metadata size is 1 for node {:?}", node_id);
+        println!("In case where metadata size is 1 for node {:?}; about to run copy from input to output", node_id);
         let s = copy_wrapper(reader, writer)?;
         println!("Node {:?} finished stdin copy", node_id);
         metadata.increment_bytes(0, s);
