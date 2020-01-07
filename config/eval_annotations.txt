@@ -7,7 +7,7 @@ mogrify[long_arg_single_dash]: OPTPARAMS:[(long:format,type:str,size:1),(long:pa
 awk: OPTPARAMS:[(short:W,type:str,size:1),(short:F,type:str,size:1),(short:v,type:str,size:1)] PARAMS:[(type:str,size:1),(type:input_file,size:list(list_separator:( )))]
 tr: FLAGS:[(short:d)] PARAMS:[(type:str,size:1)]
 cut[splittable_across_input]: OPTPARAMS:[(long:characters,short:c,size:1,type:str)]
-pr: FLAGS:[(short:m,long:merge),(short:t)] OPTPARAMS:[(short:s,type:str,size:1,attached)]
+pr: FLAGS:[(short:m,long:merge),(short:t)] OPTPARAMS:[(short:s,type:str,size:1,attached)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
 head: OPTPARAMS:[(long:lines,short:n,size:1)]
 q: FLAGS:[(short:H)] OPTPARAMS:[(short:d,size:1,type:str)] PARAMS:[(type:str,size:1)]
 sort: OPTPARAMS:[(short:k,size:1,long:key,type:str),(short:t,size:1,type:str)] FLAGS:[(short:n),(short:r)]

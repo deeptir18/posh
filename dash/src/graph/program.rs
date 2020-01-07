@@ -434,6 +434,7 @@ pub struct Program {
     counter: u32,
     sink_nodes: Vec<NodeId>,
     source_nodes: Vec<NodeId>,
+    pub pwd: stream::FileStream,
 }
 
 impl Default for Program {
@@ -446,6 +447,7 @@ impl Default for Program {
             counter: 0,
             sink_nodes: vec![],
             source_nodes: vec![],
+            pwd: stream::FileStream::default(),
         }
     }
 }
@@ -459,6 +461,9 @@ pub enum MergeDirection {
 }
 
 impl Program {
+    pub fn set_pwd(&mut self, fs: stream::FileStream) {
+        self.pwd = fs;
+    }
     pub fn write_dot(&self, filename: &str) -> Result<()> {
         let mut file = File::create(filename)?;
         file.write_all(b"digraph {\n")?;
