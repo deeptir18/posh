@@ -83,7 +83,6 @@ where
                     // write it into the tmpfile
                     writer.write(&mut buf)?;
                     if s == 0 {
-                        println!("node id {:?}, id {:?} for stdin finished", node_id, idx);
                         metadata.set_finished(idx);
                         metadata.increment_current();
                     }

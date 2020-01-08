@@ -157,7 +157,7 @@ impl Parser {
         &mut self,
         invocation: &Vec<String>,
         ind: usize,
-    ) -> Result<Vec<grammar::ParsedCommand>> {
+    ) -> Result<(Vec<grammar::ParsedCommand>, Option<usize>)> {
         let annotation = &self.annotations[ind];
         let mut annotation_map: HashMap<String, usize> = Default::default();
         let mut app = App::new(annotation.command_name.clone())
@@ -333,14 +333,17 @@ impl Parser {
         matches: &mut ArgMatches,
         annotation: &grammar::Command,
         annotation_map: HashMap<String, usize>,
-    ) -> Result<Vec<grammar::ParsedCommand>> {
+    ) -> Result<(Vec<grammar::ParsedCommand>, Option<usize>)> {
         let mut ret: Vec<grammar::ParsedCommand> = Vec::new();
+        let mut splittable_arg: Option<usize> = None;
+        let mut splittable_count: usize = 0;
         // basic parsed command containing the command name (with additional args if it's split)
         let mut baseline_parsed_cmd = grammar::ParsedCommand::new(&command_name[0]);
         for i in 1..command_name.len() {
             baseline_parsed_cmd.add_arg((command_name[i].clone(), grammar::ArgType::Str));
         }
         // find the splittable command, if it exists
+        // and create that many return values
         for arg in matches.args.iter() {
             let arg_info: &grammar::Argument =
                 &annotation.args[annotation_map[arg.0.clone()] as usize];
@@ -405,6 +408,7 @@ impl Parser {
         // TODO: matches.args.iter() might not be publicly available
         // Run two loops, to make sure lone arguments go at the end
         for arg in matches.args.iter() {
+            splittable_count += 1;
             let arg_info: &grammar::Argument =
                 &annotation.args[annotation_map[arg.0.clone()] as usize];
             match arg_info {
@@ -481,6 +485,7 @@ impl Parser {
                         grammar::ParamSize::SpecificSize(_, sep)
                         | grammar::ParamSize::List(sep) => {
                             // if splittable
+                            splittable_arg = Some(splittable_count - 1);
                             if param.splittable {
                                 // could be a wildcard
                                 let mut values_clone = values.clone();
@@ -591,6 +596,7 @@ impl Parser {
                                         grammar::ParamSize::SpecificSize(_, sep)
                                         | grammar::ParamSize::List(sep) => {
                                             if param.splittable {
+                                                splittable_arg = Some(splittable_count - 1);
                                                 // could be a wildcard
                                                 let mut values_clone = values.clone();
                                                 let mut real_vals: Vec<String> = Vec::new();
@@ -687,7 +693,7 @@ impl Parser {
             count += 1;
         }
 
-        Ok(ret)
+        Ok((ret, splittable_arg))
     }
 
     /// Tries to parse a command with each of the parsers in the whitelist.
@@ -697,12 +703,18 @@ impl Parser {
     pub fn parse_command(
         &mut self,
         invocation: Vec<String>,
-    ) -> Result<(Vec<grammar::ParsedCommand>, grammar::ParsingOptions)> {
+    ) -> Result<(
+        Vec<grammar::ParsedCommand>,
+        grammar::ParsingOptions,
+        Option<usize>,
+    )> {
         for i in 0..self.annotations.len() {
             match self.parse_invocation(&invocation, i) {
-                Ok(p) => {
+                Ok(ret) => {
+                    let p = ret.0;
+                    let splittable_count = ret.1;
                     let parsing_options = self.annotations[i].parsing_options.clone();
-                    return Ok((p, parsing_options));
+                    return Ok((p, parsing_options, splittable_count));
                 }
                 Err(e) => {
                     if self.debug {
@@ -717,7 +729,7 @@ impl Parser {
         );
 
         let res = self.default_parse(invocation)?;
-        Ok((vec![res], grammar::ParsingOptions::default()))
+        Ok((vec![res], grammar::ParsingOptions::default(), None))
     }
 
     fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {

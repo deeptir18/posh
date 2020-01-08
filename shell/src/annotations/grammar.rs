@@ -200,6 +200,9 @@ impl ParsedCommand {
     pub fn add_arg(&mut self, arg: (String, ArgType)) {
         self.typed_args.push(arg)
     }
+    pub fn set_args(&mut self, args: Vec<(String, ArgType)>) {
+        self.typed_args = args;
+    }
 
     pub fn get(&mut self, ind: usize) -> Option<(String, ArgType)> {
         if ind >= self.typed_args.len() {

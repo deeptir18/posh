@@ -50,6 +50,8 @@ pub struct CommandNode {
     options: CmdExtraInfo,
     /// Cmd might need a pwd.
     pwd: PathBuf,
+    /// Index of splittable arg,
+    splittable_arg: Option<usize>,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
@@ -108,11 +110,19 @@ impl Default for CommandNode {
             resolved_args: vec![],
             options: Default::default(),
             pwd: PathBuf::new(),
+            splittable_arg: None,
         }
     }
 }
 
 impl CommandNode {
+    pub fn set_splittable_arg(&mut self, splittable_arg: Option<usize>) {
+        self.splittable_arg = splittable_arg;
+    }
+
+    pub fn get_splittable_arg(&self) -> Option<usize> {
+        self.splittable_arg
+    }
     pub fn get_pwd(&self) -> PathBuf {
         self.pwd.clone()
     }
