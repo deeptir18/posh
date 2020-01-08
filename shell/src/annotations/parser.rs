@@ -12,6 +12,25 @@ use itertools::free::join;
 use shellwords::split;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
+
+// Tries to run glob on input and returns a pathbuf
+fn glob_wrapper(input: String) -> Result<Vec<String>> {
+    match glob(&input) {
+        Ok(list) => {
+            let mut ret: Vec<String> = Vec::new();
+            let path_list: Vec<PathBuf> = list.map(|x| x.unwrap().to_path_buf()).collect();
+            for path in path_list.iter() {
+                ret.push(path.to_str().unwrap().to_string());
+            }
+            if ret.len() == 0 {
+                ret.push(input);
+            }
+            Ok(ret)
+        }
+        Err(_) => Ok(vec![input]),
+    }
+}
 /// Takes a particular invocation of a command and splits it into shell Words
 /// Arguments:
 /// * `invocation`: &str - command invocation to be parsed
@@ -36,6 +55,8 @@ pub struct Parser {
     annotations: Vec<grammar::Command>,
     /// Used for debug printing.
     debug: bool,
+    /// Temporarily here. Max splitting factor for parallelization
+    splitting_factor: u32,
 }
 
 impl fmt::Debug for Parser {
@@ -54,7 +75,12 @@ impl Parser {
             name: name.to_string(),
             annotations: vec![],
             debug: false,
+            splitting_factor: 1,
         }
+    }
+
+    pub fn set_splitting_factor(&mut self, factor: u32) {
+        self.splitting_factor = factor;
     }
 
     /// Validates an annotation.
@@ -380,13 +406,34 @@ impl Parser {
                                 // here, values could include a wildcard
                                 // so resolve the wildcard
                                 let mut values = matches.values_of(arg.0.clone()).unwrap();
-                                let mut size = values.len();
-                                if size == 1 {
-                                    match glob(values.next().unwrap()) {
+                                let mut size = 0;
+
+                                // for each value in the iteration
+                                // need to resolve wildcards and apply chunking
+                                // TODO: here we make the assumption of 1 wildcard per mount,
+                                // but ideally, you need to re-merge dynamically *after* there is
+                                // information about the mounts.
+                                while let Some(value) = values.next() {
+                                    match glob_wrapper(value.to_string()) {
                                         Ok(list) => {
-                                            size = list.count();
+                                            let list_size = list.len();
+                                            let chunk_size = (list_size as f32
+                                                / self.splitting_factor as f32)
+                                                .round()
+                                                as usize;
+                                            if chunk_size > 0 {
+                                                // chunk the list
+                                                for _ in list.chunks(chunk_size) {
+                                                    size += 1;
+                                                }
+                                            } else {
+                                                size += list_size;
+                                            }
                                         }
-                                        Err(_) => {}
+                                        Err(_) => {
+                                            println!("glob failed!");
+                                            size += 1;
+                                        }
                                     }
                                 }
                                 for _i in 0..size {
@@ -488,31 +535,46 @@ impl Parser {
                             splittable_arg = Some(splittable_count - 1);
                             if param.splittable {
                                 // could be a wildcard
-                                let mut values_clone = values.clone();
-                                let mut real_vals: Vec<String> = Vec::new();
+                                let values_clone = values.clone();
+                                // there was a wildcard here
                                 if ret.len() != values_clone.len() {
-                                    for entry in glob(values_clone.next().unwrap())
-                                        .expect("Failed to read pattern")
-                                    {
-                                        match entry {
-                                            Ok(p) => {
-                                                let name = match p.to_str() {
-                                                    Some(n) => n.to_string(),
-                                                    None => bail!(
-                                                        "Could not turn path: {:?} to string",
-                                                        p
-                                                    ),
-                                                };
-                                                real_vals.push(name.to_string());
+                                    let mut real_chunked_vals: Vec<Vec<String>> = Vec::new();
+                                    while let Some(value) = values.clone().next() {
+                                        match glob_wrapper(value.to_string()) {
+                                            Ok(path_list) => {
+                                                // TODO: annoying unwrap here
+                                                let list_size = path_list.len();
+                                                let chunk_size = (list_size as f32
+                                                    / self.splitting_factor as f32)
+                                                    .round()
+                                                    as usize;
+                                                if chunk_size > 0 {
+                                                    // chunk the list
+                                                    for chunk in path_list.chunks(chunk_size) {
+                                                        let mut chunk_vec: Vec<String> = Vec::new();
+                                                        for path in chunk.iter() {
+                                                            chunk_vec.push(path.clone());
+                                                        }
+                                                        real_chunked_vals.push(chunk_vec);
+                                                    }
+                                                } else {
+                                                    // just push everything in the list
+                                                    for val in path_list.iter() {
+                                                        real_chunked_vals.push(vec![val.clone()])
+                                                    }
+                                                }
                                             }
-                                            Err(e) => {
-                                                bail!("One of paths is error: {:?}", e);
+                                            Err(_) => {
+                                                // Just add the single arg
+                                                real_chunked_vals.push(vec![value.to_string()]);
                                             }
                                         }
                                     }
                                     for (i, parsed_cmd) in ret.iter_mut().enumerate() {
-                                        let value = &real_vals[i];
-                                        parsed_cmd.add_arg((value.clone(), param.param_type));
+                                        let chunk = &real_chunked_vals[i];
+                                        for value in chunk.iter() {
+                                            parsed_cmd.add_arg((value.clone(), param.param_type));
+                                        }
                                     }
                                 } else {
                                     assert_eq!(ret.len(), values.len());
@@ -599,38 +661,61 @@ impl Parser {
                                                 splittable_arg = Some(splittable_count - 1);
                                                 // could be a wildcard
                                                 let mut values_clone = values.clone();
-                                                let mut real_vals: Vec<String> = Vec::new();
+                                                // there was a wildcard here
                                                 if ret.len() != values_clone.len() {
-                                                    for entry in glob(values_clone.next().unwrap())
-                                                        .expect("Failed to read pattern")
-                                                    {
-                                                        match entry {
-                                                            Ok(p) => {
-                                                                let name = match p.to_str() {
-                                                                    Some(n) => n.to_string(),
-                                                                    None => bail!(
-                                                        "Could not turn path: {:?} to string",
-                                                        p
-                                                    ),
-                                                                };
-                                                                real_vals.push(name.to_string());
+                                                    let mut real_chunked_vals: Vec<Vec<String>> =
+                                                        Vec::new();
+
+                                                    while let Some(value) = values_clone.next() {
+                                                        match glob_wrapper(value.to_string()) {
+                                                            Ok(path_list) => {
+                                                                // TODO: annoying unwrap here
+                                                                let list_size = path_list.len();
+                                                                let chunk_size = (list_size as f32
+                                                                    / self.splitting_factor as f32)
+                                                                    .round()
+                                                                    as usize;
+                                                                if chunk_size > 0 {
+                                                                    // chunk the list
+                                                                    for chunk in
+                                                                        path_list.chunks(chunk_size)
+                                                                    {
+                                                                        let mut chunk_vec: Vec<
+                                                                            String,
+                                                                        > = Vec::new();
+                                                                        for path in chunk.iter() {
+                                                                            chunk_vec
+                                                                                .push(path.clone());
+                                                                        }
+                                                                        real_chunked_vals
+                                                                            .push(chunk_vec);
+                                                                    }
+                                                                } else {
+                                                                    // just push everything in the list
+                                                                    for val in path_list.iter() {
+                                                                        real_chunked_vals.push(
+                                                                            vec![val.clone()],
+                                                                        );
+                                                                    }
+                                                                }
                                                             }
-                                                            Err(e) => {
-                                                                bail!(
-                                                                    "One of paths is error: {:?}",
-                                                                    e
-                                                                );
+                                                            Err(_) => {
+                                                                // Just add the single arg
+                                                                real_chunked_vals
+                                                                    .push(vec![value.to_string()]);
                                                             }
                                                         }
                                                     }
                                                     for (i, parsed_cmd) in
                                                         ret.iter_mut().enumerate()
                                                     {
-                                                        let value = &real_vals[i];
-                                                        parsed_cmd.add_arg((
-                                                            value.clone(),
-                                                            param.param_type,
-                                                        ));
+                                                        let chunk = &real_chunked_vals[i];
+                                                        for value in chunk.iter() {
+                                                            parsed_cmd.add_arg((
+                                                                value.clone(),
+                                                                param.param_type,
+                                                            ));
+                                                        }
                                                     }
                                                 } else {
                                                     assert_eq!(ret.len(), values.len());

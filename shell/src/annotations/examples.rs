@@ -190,5 +190,6 @@ pub fn get_test_interpreter() -> Interpreter {
         parsers: get_test_parser(),
         filemap: get_test_filemap(),
         pwd: Path::new("/d/c/folder").to_path_buf(),
+        splitting_factor: 1,
     }
 }

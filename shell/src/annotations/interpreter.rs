@@ -23,12 +23,12 @@ use std::env;
 use std::f64;
 use std::iter::FromIterator;
 use std::path::PathBuf;
-const MAX_SPLITTING_FACTOR: f32 = 8.0;
 
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
     pub filemap: FileMap,
     pub pwd: PathBuf,
+    pub splitting_factor: u32,
 }
 
 impl Interpreter {
@@ -54,11 +54,18 @@ impl Interpreter {
             parsers: parser_map,
             filemap: folders,
             pwd: PathBuf::new(),
+            splitting_factor: 1,
         })
     }
 
     pub fn set_pwd(&mut self, pwd: PathBuf) {
         self.pwd = pwd;
+    }
+
+    pub fn set_splitting_factor(&mut self, factor: u32) {
+        for (_, parser) in self.parsers.iter_mut() {
+            parser.set_splitting_factor(factor);
+        }
     }
 
     /// Command could contain some information needed by the shell, e.g. export variables,
@@ -358,59 +365,7 @@ impl Interpreter {
         command.clear_args();
         // if we need to replace any item in the parsed command because of a * => this is where we
         // do it
-        let mut repl_cmds: Vec<ParsedCommand> = Vec::new();
-        match node.get_elem() {
-            Elem::Cmd(cmd_node) => {
-                match cmd_node.get_splittable_arg() {
-                    Some(ind) => {
-                        // check if each arg in this index can be resolved
-                        for cmd in cmds.iter() {
-                            assert!(ind < cmd.typed_args.len());
-                            for arg in cmd.clone().typed_args.iter() {
-                                match arg.1 {
-                                    ArgType::InputFile | ArgType::OutputFile => {
-                                        let mut new_filestream =
-                                            FileStream::new(&arg.0.clone(), Location::Client);
-                                        let repl_filestreams = self
-                                            .filemap
-                                            .resolve_filestream_with_pattern(&mut new_filestream)?;
-                                        // calculate chunk size
-                                        // TODO: for now, assume each star delimited chunk is in it's own
-                                        // mount when splitting
-                                        let chunk_size = (repl_filestreams.len() as f32
-                                            / MAX_SPLITTING_FACTOR)
-                                            .round()
-                                            as usize;
-                                        for fs_chunk in repl_filestreams.chunks(chunk_size) {
-                                            let mut new_args: Vec<(String, ArgType)> = Vec::new();
-                                            for (i, x) in cmd.typed_args.iter().enumerate() {
-                                                if i == ind {
-                                                    for fs in fs_chunk.iter() {
-                                                        new_args.push((fs.get_name(), arg.1));
-                                                    }
-                                                } else {
-                                                    new_args.push(x.clone());
-                                                }
-                                            }
-                                            let mut new_parsed_cmd =
-                                                ParsedCommand::new(&cmd.command_name);
-                                            new_parsed_cmd.set_args(new_args);
-                                            repl_cmds.push(new_parsed_cmd);
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        repl_cmds = cmds.clone();
-                    }
-                }
-            }
-            _ => {}
-        }
-        for cmd in repl_cmds.iter() {
+        for cmd in cmds.iter() {
             let mut new_node = command.clone();
             for arg in cmd.typed_args.iter() {
                 match arg.1 {

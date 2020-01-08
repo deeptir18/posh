@@ -100,6 +100,14 @@ fn main() {
         &output_folder,
         VizType::Dash,
     );
+
+    run_viz(
+        &dot_binary,
+        "cat *.toml",
+        "cat_wildcard",
+        &output_folder,
+        VizType::Dash,
+    );
 }
 
 fn run_viz(dot_binary: &str, cmd: &str, name: &str, output_folder: &str, viztype: VizType) {
@@ -162,6 +170,7 @@ fn visualize_dash_graph(dot_binary: &str, command: &str, name: &str, folder: &st
     let shellsplit = shell_parse::ShellSplit::new(command)?;
     let shellgraph = shellsplit.convert_into_shell_graph()?;
     let mut program = shellgraph.convert_into_program()?;
+    interpreter.set_splitting_factor(2);
     interpreter.apply_parser(&mut program)?;
     interpreter.resolve_env_vars(&mut program)?;
     interpreter.parallelize_cmd_nodes(&mut program)?;
