@@ -164,7 +164,6 @@ impl ShellClient {
         // for the portions of the graph *it needs to execute*
         let mut shared_map = SharedStreamMap::new();
         self.run_setup(&mut program_map, &mut shared_map)?;
-        println!("finished running setup");
         // now try to execute each portion of the program:
         self.send_program(&mut program_map, &mut shared_map)?;
         Ok(())

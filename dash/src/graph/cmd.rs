@@ -7,6 +7,7 @@ use itertools::join;
 use program::{Link, NodeId, ProgId};
 use std::collections::HashMap;
 use std::net::TcpStream;
+use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::slice::IterMut;
 use std::thread;
@@ -47,6 +48,8 @@ pub struct CommandNode {
     resolved_args: Vec<String>,
     /// Extra information used for scheduling.
     options: CmdExtraInfo,
+    /// Cmd might need a pwd.
+    pwd: PathBuf,
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
@@ -104,11 +107,20 @@ impl Default for CommandNode {
             location: Default::default(),
             resolved_args: vec![],
             options: Default::default(),
+            pwd: PathBuf::new(),
         }
     }
 }
 
 impl CommandNode {
+    pub fn get_pwd(&self) -> PathBuf {
+        self.pwd.clone()
+    }
+
+    pub fn set_pwd(&mut self, path: &Path) {
+        self.pwd = path.to_path_buf();
+    }
+
     pub fn get_options(&self) -> CmdExtraInfo {
         self.options
     }
@@ -780,7 +792,12 @@ impl Rapper for CommandNode {
     }
 
     /// Resolves both arguments and any file streams.
+    /// Also sets the pwd of the node to point to the correct place.
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
+        if self.options.get_needs_current_dir() {
+            let parent = Path::new(parent_dir).join(self.pwd.as_path());
+            self.pwd = parent.to_path_buf();
+        }
         match self.resolve_file_args(parent_dir) {
             Ok(mut v) => {
                 self.resolved_args.append(&mut v);

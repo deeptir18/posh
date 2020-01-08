@@ -290,6 +290,8 @@ impl Interpreter {
                         }
                         if options.needs_current_dir {
                             new_options.set_needs_current_dir(true);
+                            // need to set the pwd of the node
+                            command_node.set_pwd(self.pwd.as_path());
                         }
                         command_node.set_options(new_options);
                         node_repl_map.push((*id, typed_args));
@@ -303,7 +305,6 @@ impl Interpreter {
         // generate new command nodes to replace
         for (id, parsed_commands) in node_repl_map.into_iter() {
             let node = program.get_node(id).unwrap();
-
             let new_command_nodes = self.interpret_cmd_types(parsed_commands, node)?;
             program.replace_node(id, new_command_nodes)?;
         }
@@ -568,8 +569,35 @@ impl Interpreter {
                 node.set_loc(Location::Client);
             } else {
                 assert!(entry.len() == 1);
-                for (loc, _) in entry.iter() {
+                for (loc, _count) in entry.iter() {
                     node.set_loc(loc.clone());
+                    // need to change the pwd according to the mount information
+                    match node.get_mut_elem() {
+                        Elem::Cmd(ref mut command_node) => {
+                            if command_node.get_options().get_needs_current_dir() {
+                                match loc {
+                                    Location::Client => {}
+                                    Location::Server(ip) => {
+                                        match self.filemap.get_mount(&ip) {
+                                            Some(mount) => {
+                                                // strip prefix from node and set server's pwd
+                                                match self.pwd.clone().strip_prefix(&mount) {
+                                                    Ok(p) => command_node.set_pwd(p),
+                                                    Err(e) => {
+                                                        bail!("Command node {:?} needs current_dir but pwd {:?} is not within mount for server {:?}, whose mount is {:?} -> {:?}", command_node.get_id(), self.pwd, loc, &mount, e);
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                // TODO: do something
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
                 }
             }
         }

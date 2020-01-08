@@ -4,8 +4,10 @@ use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map;
 use std::collections::HashMap;
+use std::env;
 use std::fmt;
 use std::fs::File;
+use std::path::PathBuf;
 use std::slice;
 use std::thread;
 use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
@@ -434,7 +436,6 @@ pub struct Program {
     counter: u32,
     sink_nodes: Vec<NodeId>,
     source_nodes: Vec<NodeId>,
-    pub pwd: stream::FileStream,
 }
 
 impl Default for Program {
@@ -447,7 +448,6 @@ impl Default for Program {
             counter: 0,
             sink_nodes: vec![],
             source_nodes: vec![],
-            pwd: stream::FileStream::default(),
         }
     }
 }
@@ -461,9 +461,6 @@ pub enum MergeDirection {
 }
 
 impl Program {
-    pub fn set_pwd(&mut self, fs: stream::FileStream) {
-        self.pwd = fs;
-    }
     pub fn write_dot(&self, filename: &str) -> Result<()> {
         let mut file = File::create(filename)?;
         file.write_all(b"digraph {\n")?;
@@ -1395,6 +1392,22 @@ impl Program {
         Ok(())
     }
 
+    /// If any of the nodes need a current dir, finds what the dir is
+    /// to set for the entire program
+    pub fn get_current_dir(&self) -> Option<PathBuf> {
+        for (_id, node) in self.nodes.iter() {
+            match node.get_elem() {
+                Elem::Cmd(cmdnode) => {
+                    if cmdnode.get_options().get_needs_current_dir() {
+                        return Some(cmdnode.get_pwd());
+                    }
+                }
+                _ => {}
+            }
+        }
+        return None;
+    }
+
     /// Executes a program on the current server.
     /// stream_map: SharedStreamMap that contains handles to any tcp streams needed by any nodes to
     /// execute.
@@ -1405,6 +1418,15 @@ impl Program {
         let execution_order = self.execution_order();
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
         let mut node_thread_ids: Vec<NodeId> = Vec::new();
+
+        // First, set the current dir if this program requires it.
+        // theoretically should not break anything else, as stuff is being executed with full paths
+        match self.get_current_dir() {
+            Some(pathbuf) => {
+                env::set_current_dir(pathbuf.as_path())?;
+            }
+            None => {}
+        }
         // First execute any commands, e.g. spawn the initial processes
         for node_id in execution_order.iter() {
             let node = match self.nodes.get_mut(node_id) {

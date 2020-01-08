@@ -5,9 +5,7 @@ use super::Result;
 use bincode::{deserialize, serialize};
 use failure::bail;
 use std::collections::HashMap;
-use std::env::set_current_dir;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
-use std::path::Path;
 use std::{fs, thread};
 use stream::SharedStreamMap;
 /// matches client IP to folder name
@@ -186,12 +184,6 @@ fn handle_spawned_client(
             // all the streams must be setup for this part of the program,
             // so execute the program!
             program.resolve_args(&folder)?;
-            // cd to the folder specified in the programs' pwd
-            println!("Server pwd: {:?}", program.pwd);
-            // TODO: hack
-            set_current_dir(&Path::new(
-                "/mnt/disks/portscan_ssd/nfs_deepti/git/dash/chromium",
-            ))?;
             let response = match program.execute(stream_map, tmp_folder) {
                 Ok(_) => serialize(&rpc::ClientReturnCode::Success)?,
                 Err(e) => {

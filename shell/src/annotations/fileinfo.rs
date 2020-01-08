@@ -107,6 +107,13 @@ impl FileMap {
         None
     }
 
+    pub fn get_mount(&self, ip: &str) -> Option<String> {
+        match self.map.get(&ip.to_string()) {
+            Some(s) => Some(s.clone()),
+            None => None,
+        }
+    }
+
     /// Used to resolve any filestream arguments that might contain a pattern the resulting list of
     /// multiple files.
     /// TODO: This *only* resolves the pattern with local or absolute paths -- so to do this
