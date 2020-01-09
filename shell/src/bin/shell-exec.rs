@@ -51,6 +51,13 @@ struct Opt {
         help = "Place to keep temporary stuff"
     )]
     tmp_file: String,
+    #[structopt(
+        short = "split",
+        long = "splitting_factor",
+        help = "How much the frontend should split things.",
+        default_value = "1"
+    )]
+    splitting_factor: u32,
 }
 
 fn main() {
@@ -61,6 +68,7 @@ fn main() {
     let runtime_port = opt.runtime_port;
     let given_pwd = opt.pwd;
     let tmp_file = opt.tmp_file;
+    let splitting_factor: u32 = opt.splitting_factor;
     let mut pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
@@ -93,6 +101,7 @@ fn main() {
         }
     };
     interpreter.set_pwd(pwd.clone());
+    interpreter.set_splitting_factor(splitting_factor);
 
     // loop over the binary, and execute all of the commands
     let file = match File::open(binary) {
