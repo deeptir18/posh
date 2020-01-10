@@ -1423,6 +1423,7 @@ impl Program {
         // theoretically should not break anything else, as stuff is being executed with full paths
         match self.get_current_dir() {
             Some(pathbuf) => {
+                println!("Trying to set current dir on server: {:?}", pathbuf);
                 env::set_current_dir(pathbuf.as_path())?;
             }
             None => {}

@@ -6,6 +6,7 @@ use failure::bail;
 use itertools::join;
 use program::{Link, NodeId, ProgId};
 use std::collections::HashMap;
+use std::net::Shutdown;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
@@ -932,6 +933,8 @@ fn copy_stdout(
                     node_id, netstream
                 );
                 copy(&mut stdout_handle, &mut tcp_stream)?;
+                // now, shut down the other end of the tcp_stream
+                tcp_stream.shutdown(Shutdown::Both)?;
             }
             _ => {
                 bail!(
@@ -964,6 +967,8 @@ fn copy_stderr(
                     ),
                 };
                 copy(&mut stderr_handle, &mut tcp_stream)?;
+                // shut down the other end so the reader is not waiting!
+                tcp_stream.shutdown(Shutdown::Both)?;
             }
             _ => {
                 bail!("Should not be in copy stderr function unless stream type is TCP connection: {:?}", stream);
