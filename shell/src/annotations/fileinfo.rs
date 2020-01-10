@@ -5,6 +5,7 @@ use failure::bail;
 use glob::glob;
 use nom::types::CompleteByteSlice;
 use nom::*;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
 use std::fs::File;
@@ -16,7 +17,27 @@ use stream::FileStream;
 /// Map of mount to IP addresses
 pub struct FileMap {
     map: HashMap<String, String>,
+    cache: HashMap<String, CacheEntry>, // caches the location of certain directories + full path
 }
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Default)]
+pub struct CacheEntry {
+    pub rel_path: String,
+    pub ip: String,
+    pub full_path: String,
+    pub mount: String,
+}
+impl CacheEntry {
+    pub fn new(rel_path: &str, ip: String, full_path: &str, mount: &str) -> Self {
+        CacheEntry {
+            rel_path: rel_path.to_string(),
+            ip: ip.clone(),
+            full_path: full_path.to_string(),
+            mount: mount.to_string(),
+        }
+    }
+}
+
 named_complete!(
     parse_file_info<(&str, &str)>,
     do_parse!(
@@ -41,8 +62,21 @@ fn in_mount(filename: &str, mount: &str, _pwd: &PathBuf) -> bool {
 }
 
 impl FileMap {
+    pub fn cached_location(&self, filename: &str, _pwd: &PathBuf) -> Option<CacheEntry> {
+        // ideally stores the relative filepaths.
+        for (dir, entry) in self.cache.iter() {
+            if Path::new(filename).starts_with(Path::new(dir)) {
+                return Some(entry.clone());
+            }
+        }
+        return None;
+    }
+
     pub fn construct(map: HashMap<String, String>) -> Self {
-        FileMap { map: map }
+        FileMap {
+            map: map,
+            cache: HashMap::default(),
+        }
     }
 
     pub fn new(mount_info: &str) -> Result<Self> {
@@ -61,7 +95,10 @@ impl FileMap {
             ret.insert(file.to_string(), ip.to_string());
         }
         println!("filemap: {:?}", ret);
-        Ok(FileMap { map: ret })
+        Ok(FileMap {
+            map: ret,
+            cache: HashMap::default(),
+        })
     }
 
     /// TODO: here for backwards compatibility
@@ -78,10 +115,49 @@ impl FileMap {
 
     /// Checks which mount the filename resolves to (if any)
     pub fn find_match(
-        &self,
+        &mut self,
         filestream: &mut FileStream,
         pwd: &PathBuf,
     ) -> Option<(String, String)> {
+        // first, check if path is cached anywhere
+        //pub rel_path: String,
+        //pub loc: Location,
+        //pub full_path: String,
+        //pub mount: String,
+        // #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Default)]
+        match self.cached_location(&filestream.get_name(), pwd) {
+            Some(entry) => {
+                // for now, we want to replace the string for that substring in the path we have,
+                // and replace it with the full path saved for this sub folder
+                let cached_full = self.cache.get(&entry.rel_path).unwrap();
+                let rel_path = Path::new(&entry.rel_path);
+                let cur_loc = Path::new(&filestream.get_name()).to_path_buf();
+                let cur_relative = cur_loc
+                    .as_path()
+                    .strip_prefix(rel_path)
+                    .expect("Not a prefix");
+                println!(
+                    "rel_path: {:?}, cur_loc: {:?}, cur_relative: {:?}",
+                    rel_path, cur_loc, cur_relative
+                );
+
+                let mut result = Path::new(&cached_full.full_path).to_path_buf();
+                result.push(cur_relative);
+                println!("final ful: {:?}", result);
+                filestream.set_name(result.to_str().unwrap());
+                let mount = entry.mount.clone();
+                let ip = entry.ip.clone();
+                return Some((mount, ip));
+            }
+            None => {}
+        }
+        let mut new_cache_entry = CacheEntry::default();
+        // store the name of the old relative path passed in
+        let mut old_path = Path::new(&filestream.get_name()).to_path_buf();
+        if !old_path.as_path().is_dir() {
+            old_path.pop();
+        }
+        new_cache_entry.rel_path = old_path.to_str().unwrap().to_string();
         // first, canonicalize the path
         match filestream.dash_cannonicalize(pwd) {
             Ok(_) => {}
@@ -89,8 +165,22 @@ impl FileMap {
                 println!("Could not canonicalize fs: {:?} -> {:?}", filestream, e);
             }
         }
+        println!("filestream after cannoc: {:?}", filestream);
+        let mut new_path = Path::new(&filestream.get_name()).to_path_buf();
+        if !new_path.as_path().is_dir() {
+            new_path.pop();
+        }
+        new_cache_entry.full_path = new_path.to_str().unwrap().to_string();
+
         for (mount, ip) in self.map.iter() {
             if in_mount(&filestream.get_name(), &mount, pwd) {
+                // add this into the cache
+                new_cache_entry.mount = mount.clone();
+                new_cache_entry.ip = ip.clone();
+                println!("entry:{:?}", new_cache_entry);
+                println!("mutilated filestream name: {:?}", filestream.get_name());
+                self.cache
+                    .insert(new_cache_entry.rel_path.clone(), new_cache_entry);
                 return Some((mount.clone(), ip.clone()));
             }
         }
@@ -99,6 +189,7 @@ impl FileMap {
 
     /// Check which mount the pwd resolves to, if any
     pub fn find_current_dir_match(&self, pwd: &PathBuf) -> Option<(String, String)> {
+        println!("checking for {:?}", pwd);
         for (mount, ip) in self.map.iter() {
             if Path::new(pwd).starts_with(Path::new(mount)) {
                 return Some((mount.clone(), ip.clone()));
@@ -108,10 +199,12 @@ impl FileMap {
     }
 
     pub fn get_mount(&self, ip: &str) -> Option<String> {
-        match self.map.get(&ip.to_string()) {
-            Some(s) => Some(s.clone()),
-            None => None,
+        for (mount, ip_addr) in self.map.iter() {
+            if ip == ip_addr {
+                return Some(mount.clone());
+            }
         }
+        return None;
     }
 
     /// Used to resolve any filestream arguments that might contain a pattern the resulting list of
@@ -153,7 +246,7 @@ impl FileMap {
     }
 
     /// Modifies the filestream to be remote if necessary.
-    pub fn resolve_filestream(&self, filestream: &mut FileStream, pwd: &PathBuf) -> Result<()> {
+    pub fn resolve_filestream(&mut self, filestream: &mut FileStream, pwd: &PathBuf) -> Result<()> {
         // first, see if there's an environment variable
         // Note: won't work on filestreams with patterns
         if filestream.get_name().starts_with("$") {
@@ -175,7 +268,12 @@ impl FileMap {
             Location::Client => match self.find_match(filestream, pwd) {
                 Some((mount, ip)) => {
                     filestream.set_location(Location::Server(ip));
+                    println!(
+                        "Found match, but trying to strip prefix: {:?} mount -> {:?}",
+                        filestream, mount
+                    );
                     filestream.strip_prefix(&mount)?;
+                    println!("filestream now: {:?}", filestream);
                     Ok(())
                 }
                 None => Ok(()),

@@ -95,11 +95,9 @@ impl Interpreter {
         let shellsplit = shell_parse::ShellSplit::new(command)?;
         // turn shell split into shell graph
         let shellgraph = shellsplit.convert_into_shell_graph()?;
-        println!("shell graph : {:?}", shellgraph);
 
         // turn this into node graph that can be fed into the annotation layer to be executed
         let mut program = shellgraph.convert_into_program()?;
-        println!("raw shell program : {:?}", program);
 
         // apply the parser
         // note: involves interpreting * for JUST parallelizable arguments
@@ -584,32 +582,6 @@ impl Interpreter {
                 for (loc, _count) in entry.iter() {
                     node.set_loc(loc.clone());
                     // need to change the pwd according to the mount information
-                    match node.get_mut_elem() {
-                        Elem::Cmd(ref mut command_node) => {
-                            if command_node.get_options().get_needs_current_dir() {
-                                match loc {
-                                    Location::Client => {}
-                                    Location::Server(ip) => {
-                                        match self.filemap.get_mount(&ip) {
-                                            Some(mount) => {
-                                                // strip prefix from node and set server's pwd
-                                                match self.pwd.clone().strip_prefix(&mount) {
-                                                    Ok(p) => command_node.set_pwd(p),
-                                                    Err(e) => {
-                                                        bail!("Command node {:?} needs current_dir but pwd {:?} is not within mount for server {:?}, whose mount is {:?} -> {:?}", command_node.get_id(), self.pwd, loc, &mount, e);
-                                                    }
-                                                }
-                                            }
-                                            None => {
-                                                // TODO: do something
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
                 }
             }
         }
@@ -674,9 +646,16 @@ impl Interpreter {
                             // if this cmdnode implicitly relies on the current dir, assign it
                             if cmdnode.get_options().get_needs_current_dir() {
                                 // check what mount the current dir is in
+                                println!("Checking needs current dir for current pwd!");
                                 match self.filemap.find_current_dir_match(&self.pwd) {
-                                    Some((_, ip)) => {
-                                        cmdnode.set_loc(Location::Server(ip));
+                                    Some((mount, ip)) => {
+                                        cmdnode.set_loc(Location::Server(ip.clone()));
+                                        match self.pwd.clone().strip_prefix(&mount) {
+                                            Ok(p) => cmdnode.set_pwd(p),
+                                            Err(e) => {
+                                                bail!("Command node {:?} needs current_dir but pwd {:?} is not within mount for server {:?}, whose mount is {:?} -> {:?}", cmdnode.get_id(), self.pwd, ip, &mount, e);
+                                            }
+                                        }
                                     }
                                     None => {}
                                 }
