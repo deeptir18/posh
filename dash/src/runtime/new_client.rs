@@ -130,7 +130,9 @@ impl ShellClient {
             let port = self.port.clone();
             let tmp_folder = self.tmp.clone();
             execution_threads.push(thread::spawn(move || {
-                execute_subprogram(location, program, shared_map_copy, port, tmp_folder)
+                let ret = execute_subprogram(location, program, shared_map_copy, port, tmp_folder);
+                println!("One of thrreads joined");
+                ret
             }));
         }
 
@@ -218,6 +220,7 @@ fn run_stream_setup(
             stream.set_nonblocking(true)?;
             let clone = stream.try_clone()?;
             map.insert(netstream.clone(), clone)?;
+            drop(stream);
             Ok(())
         }
         Location::Server(ip) => {
@@ -280,10 +283,17 @@ fn execute_subprogram(
                 rpc::MessageType::ProgramExecution,
                 &mut stream,
             )?;
+            stream.set_nonblocking(false)?;
+            println!("waiting for the server to respond");
             let (_, next_msg) = read_msg_and_type(&mut stream)?;
             let msg = deserialize(&next_msg[..])?;
+            println!("server responded ugh");
             match msg {
-                rpc::ClientReturnCode::Success => Ok(()),
+                rpc::ClientReturnCode::Success => {
+                    println!("Want to also kill the client now");
+                    println!("Server returned success");
+                    return Ok(());
+                }
                 rpc::ClientReturnCode::Failure => {
                     bail!("Server returned failure to execute program.")
                 }

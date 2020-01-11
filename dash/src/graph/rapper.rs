@@ -256,6 +256,7 @@ where
                     return Ok(0);
                 }
                 ErrorKind::WouldBlock => {
+                    println!("everything sucks");
                     // sleep and try again
                     // ideally, set the underlying writer to just be blocking
                     // this function is only called in settings where it's safe to block

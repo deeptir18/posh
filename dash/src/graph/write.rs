@@ -271,10 +271,17 @@ impl Rapper for WriteNode {
                 }
 
                 match stream {
-                    DashStream::Tcp(_netstream) => {
+                    DashStream::Tcp(netstream) => {
+                        println!("reading stdin from net {:?}", netstream);
                         let mut tcpstream = input_tcpstreams.get_mut(&idx).unwrap();
                         match output_stream.clone() {
                             DashStream::File(filestream) => {
+                                // right now, hack. Fix this properly later by passing an option to
+                                // iterating_redirect
+                                if self.stdin.len() == 1 {
+                                    println!("setting up non blocking FALSE");
+                                    tcpstream.set_nonblocking(false)?;
+                                }
                                 let mut file_handle = filestream.open()?;
                                 iterating_redirect(
                                     &mut tcpstream,
@@ -286,6 +293,12 @@ impl Rapper for WriteNode {
                                 )?;
                             }
                             DashStream::Stdout => {
+                                // right now, hack. Fix this properly later by passing an option to
+                                // iterating_redirect
+                                if self.stdin.len() == 1 {
+                                    println!("setting non blocking");
+                                    tcpstream.set_nonblocking(false)?;
+                                }
                                 iterating_redirect(
                                     &mut tcpstream,
                                     &mut stdout(),
@@ -296,6 +309,12 @@ impl Rapper for WriteNode {
                                 )?;
                             }
                             DashStream::Stderr => {
+                                // right now, hack. Fix this properly later by passing an option to
+                                // iterating_redirect
+                                if self.stdin.len() == 1 {
+                                    println!("setting non blocking");
+                                    tcpstream.set_nonblocking(false)?;
+                                }
                                 iterating_redirect(
                                     &mut tcpstream,
                                     &mut stderr(),
