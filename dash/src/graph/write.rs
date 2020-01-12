@@ -271,8 +271,7 @@ impl Rapper for WriteNode {
                 }
 
                 match stream {
-                    DashStream::Tcp(netstream) => {
-                        println!("reading stdin from net {:?}", netstream);
+                    DashStream::Tcp(_netstream) => {
                         let mut tcpstream = input_tcpstreams.get_mut(&idx).unwrap();
                         match output_stream.clone() {
                             DashStream::File(filestream) => {
@@ -379,6 +378,8 @@ impl Rapper for WriteNode {
                     }
                 }
             }
+            // remove the temp files
+            metadata.remove_files()?;
         }
         Ok(())
     }

@@ -114,7 +114,19 @@ impl Interpreter {
         self.resolve_filestreams(&mut program)?;
         // apply location algorithm
         self.assign_program_location(&mut program)?;
-        println!("program: {:?}", program);
+        //println!("program: {:?}", program);
+        // write the program somewhere
+        /*let dot_path = "/home/deeptir/research/fs_project/tmp/distributed.dot";
+        let graph_path = "/home/deeptir/research/fs_project/tmp/distributed.pdf";
+        program.write_dot(dot_path)?;
+        let _output = Command::new("/usr/bin/dot")
+            .arg(dot_path)
+            .arg("-Tpdf")
+            .arg("-o")
+            .arg(graph_path)
+            .output()
+            .expect("Failed to run dot command");*/
+
         Ok(program)
     }
 
