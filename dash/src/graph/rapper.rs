@@ -82,6 +82,8 @@ where
                     metadata.increment_bytes(idx, s as u64);
                     // write it into the tmpfile
                     writer.write(&mut buf)?;
+                    // todo: can we optimize the number of times we call this
+                    writer.flush()?;
                     if s == 0 {
                         metadata.set_finished(idx);
                         metadata.increment_current();
