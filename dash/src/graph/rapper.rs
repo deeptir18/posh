@@ -4,6 +4,7 @@ use super::Location;
 use super::Result;
 use failure::bail;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::fs::{remove_file, File};
 use std::io::ErrorKind;
 use std::io::{copy, Read, Write};
@@ -39,6 +40,7 @@ where
     R: Read,
     W: Write,
 {
+    //println!("in iterating redirect {:?}, idx {:?}", node_id, idx);
     // optimization: if there is one input stream,
     // directly copy from the reader to the writer
     // and increment the count
@@ -51,15 +53,84 @@ where
         metadata.increment_current();
         return Ok(s);
     } else {
+        // copy everything into tmpfiles
     }
 
-    if idx == metadata.current() {
+    // else just copy ALL output into individual tmps
+    if !metadata.get_finished_tmp(idx) {
+        let mut tmpfile = &tmp_handles[idx];
+        let mut buf = [0u8; READ_BUFFER_SIZE];
+        match read_rapper(reader, &mut buf) {
+            Ok(s) => {
+                metadata.increment_bytes(idx, s as u64);
+                // make sure to ONLY write what was read into the writer
+                if s == 0 {
+                    metadata.set_finished_tmp(idx);
+                //println!("Node {:?} Finished reading tmpfile for # {}", node_id, idx);
+                } else {
+                    /*println!(
+                        "about to write into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
+                        s, node_id, idx
+                    );*/
+                    tmpfile.write_all(&buf[..s])?;
+                    tmpfile.flush()?;
+                    /*println!(
+                        "wrote and flushed into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
+                        s, node_id, idx
+                    );*/
+                }
+                return Ok(s as u64);
+            }
+            Err(e) => match e.kind() {
+                ErrorKind::WouldBlock => {
+                    let sleep_duration = time::Duration::from_millis(10);
+                    thread::sleep(sleep_duration);
+                    return Ok(0);
+                }
+                _ => {
+                    bail!("Failed reading stdin on stream {:?}: {:?}", idx, e);
+                }
+            },
+        }
+    } else {
+        // check if all finished, copy everything
+        if metadata.all_finished() {
+            println!("All finished");
+            let file_handles = metadata.open_read_only_files()?;
+            for i in 0..metadata.get_size() {
+                let mut tmpfile = &file_handles[i];
+                println!("Node {:?} Trying to copy {:?}", node_id, i);
+                copy(&mut tmpfile, writer)?;
+            }
+            metadata.set_current_finished();
+        }
+        return Ok(0);
+    }
+
+    /*if idx == metadata.current() {
+        /*println!(
+            "in iterating redirect {:?}, idx {:?}, current: {:?} is current!",
+            node_id,
+            idx,
+            metadata.current()
+        );*/
         // first, copy everything from the tmp file into the writer
         // if we haven't yet
         if !metadata.get_finished_tmp(idx) {
             let tmpfile = &tmp_handles[idx];
+            /*println!(
+                "Trying to get metadata for {:?}; node id {:?}",
+                idx, node_id
+            );*/
             let file_metadata = tmpfile.metadata()?;
+            //println!("Got metadata for {:?}; node id {:?}", idx, node_id);
             if file_metadata.len() > 0 {
+                /*println!(
+                    "Node id {:?}, trying to open {:?}, for idx {:?}",
+                    node_id,
+                    metadata.get_filename(idx),
+                    idx
+                );*/
                 let mut new_tmpfile_handle = File::open(metadata.get_filename(idx).as_path())?;
                 println!(
                     "node {:?}, copying from tmpfile into writer for idx {:?}",
@@ -76,18 +147,22 @@ where
         if metadata.finished(idx) {
             metadata.increment_current();
         } else {
+            //println!("Node {:?} Continuing to read from {:?}", node_id, idx);
             let mut buf = [0u8; READ_BUFFER_SIZE];
             match read_rapper(reader, &mut buf) {
                 Ok(s) => {
                     metadata.increment_bytes(idx, s as u64);
-                    // write it into the tmpfile
-                    writer.write(&mut buf)?;
-                    // todo: can we optimize the number of times we call this
-                    writer.flush()?;
+                    // if done reading.
                     if s == 0 {
                         metadata.set_finished(idx);
                         metadata.increment_current();
+                        println!(" {:?} Finished reading from {:?}", node_id, idx);
                     }
+
+                    // make sure to ONLY write what was read into the writer
+                    writer.write_all(&buf[..s])?;
+                    writer.flush()?;
+                    return Ok(s as u64);
                 }
                 Err(e) => {
                     match e.kind() {
@@ -105,15 +180,35 @@ where
             }
         }
     } else {
-        //println!("idx that is greater than current: {:?}", idx);
+        /*println!(
+            "idx that is greater than current: {:?}, current is {:?}, node id: {:?}",
+            idx,
+            metadata.current(),
+            node_id
+        );*/
+        if metadata.get_finished_tmp(idx) {
+            return Ok(0);
+        }
         let mut tmpfile = &tmp_handles[idx];
         let mut buf = [0u8; READ_BUFFER_SIZE];
         match read_rapper(reader, &mut buf) {
             Ok(s) => {
                 metadata.increment_bytes(idx, s as u64);
-                tmpfile.write(&mut buf)?;
+                // make sure to ONLY write what was read into the writer
                 if s == 0 {
                     metadata.set_finished(idx);
+                //println!("Finished reading tmpfile for # {}", idx);
+                } else {
+                    /*println!(
+                        "about to write into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
+                        s, node_id, idx
+                    );*/
+                    tmpfile.write_all(&buf[..s])?;
+                    tmpfile.flush()?;
+                    /*println!(
+                        "wrote and flushed into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
+                        s, node_id, idx
+                    );*/
                 }
             }
             Err(e) => match e.kind() {
@@ -127,9 +222,12 @@ where
             },
         }
     }
-    //println!("returning from this terrible function for idx {:?}", idx);
+    /*println!(
+        "returning from this terrible function for NODE ID {:?} and idx {:?}",
+        node_id, idx
+    );*/
 
-    Ok(0)
+    Ok(0)*/
 }
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct InputStreamMetadata {
@@ -177,12 +275,25 @@ impl InputStreamMetadata {
         self.size
     }
 
+    pub fn set_current_finished(&mut self) {
+        self.curr = self.size;
+    }
+
     pub fn get_finished_tmp(&self, idx: usize) -> bool {
         *self.finished_tmp.get(&idx).unwrap()
     }
 
     pub fn set_finished_tmp(&mut self, idx: usize) {
         *self.finished_tmp.get_mut(&idx).unwrap() = true;
+    }
+
+    pub fn all_finished(&self) -> bool {
+        for i in 0..self.size {
+            if !self.get_finished_tmp(i) {
+                return false;
+            }
+        }
+        return true;
     }
 
     pub fn current(&self) -> usize {
@@ -228,8 +339,20 @@ impl InputStreamMetadata {
         Ok(ret)
     }
 
+    pub fn open_read_only_files(&self) -> Result<Vec<File>> {
+        let mut ret: Vec<File> = Vec::new();
+        if self.filenames.len() > 1 {
+            for filename in self.filenames.iter() {
+                let file = OpenOptions::new().read(true).open(filename)?;
+                ret.push(file);
+            }
+        }
+        Ok(ret)
+    }
+
     /// Remove the temporary files.
     pub fn remove_files(&self) -> Result<()> {
+        println!("trying to remove: {:?}", self.filenames);
         if self.filenames.len() > 1 {
             for filename in self.filenames.iter() {
                 remove_file(filename.as_path())?;
@@ -258,7 +381,6 @@ where
                     return Ok(0);
                 }
                 ErrorKind::WouldBlock => {
-                    println!("everything sucks");
                     // sleep and try again
                     // ideally, set the underlying writer to just be blocking
                     // this function is only called in settings where it's safe to block

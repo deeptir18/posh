@@ -6,6 +6,7 @@ use itertools::join;
 use program::{Link, NodeId, ProgId};
 use std::collections::HashMap;
 use std::io::{stderr, stdout};
+use std::mem::drop;
 use std::net::TcpStream;
 use std::slice::IterMut;
 use stream::{
@@ -239,6 +240,13 @@ impl Rapper for WriteNode {
                 );
             }
         };
+        match output_stream.clone() {
+            DashStream::File(filestream) => {
+                let f = filestream.open()?;
+                drop(f);
+            }
+            _ => {}
+        }
 
         // pop all the individual streams so we don't need to access the shared hashmap again
         let mut input_pipestreams: HashMap<usize, OutputHandle> = HashMap::default();
@@ -281,7 +289,8 @@ impl Rapper for WriteNode {
                                     println!("setting up non blocking FALSE");
                                     tcpstream.set_nonblocking(false)?;
                                 }
-                                let mut file_handle = filestream.open()?;
+                                // need to open this in APPEND mode
+                                let mut file_handle = filestream.open_with_append()?;
                                 iterating_redirect(
                                     &mut tcpstream,
                                     &mut file_handle,
@@ -290,6 +299,7 @@ impl Rapper for WriteNode {
                                     &mut tmp_handles,
                                     self.node_id,
                                 )?;
+                                drop(file_handle);
                             }
                             DashStream::Stdout => {
                                 // right now, hack. Fix this properly later by passing an option to
@@ -338,7 +348,7 @@ impl Rapper for WriteNode {
                         }
                         match output_stream.clone() {
                             DashStream::File(filestream) => {
-                                let mut file_handle = filestream.open()?;
+                                let mut file_handle = filestream.open_with_append()?;
                                 iterating_redirect(
                                     &mut output_handle,
                                     &mut file_handle,
@@ -347,6 +357,7 @@ impl Rapper for WriteNode {
                                     &mut tmp_handles,
                                     self.node_id,
                                 )?;
+                                drop(file_handle);
                             }
                             DashStream::Stdout => {
                                 iterating_redirect(
@@ -378,9 +389,8 @@ impl Rapper for WriteNode {
                     }
                 }
             }
-            // remove the temp files
-            metadata.remove_files()?;
         }
+        metadata.remove_files()?;
         Ok(())
     }
 

@@ -130,8 +130,14 @@ impl ShellClient {
             let port = self.port.clone();
             let tmp_folder = self.tmp.clone();
             execution_threads.push(thread::spawn(move || {
-                let ret = execute_subprogram(location, program, shared_map_copy, port, tmp_folder);
-                println!("One of thrreads joined");
+                let ret = execute_subprogram(
+                    location.clone(),
+                    program,
+                    shared_map_copy,
+                    port,
+                    tmp_folder,
+                );
+                println!("One of threads joined: {:?}", location);
                 ret
             }));
         }
@@ -270,7 +276,16 @@ fn execute_subprogram(
             // execute the subprogram
             println!("executing following subprogram locally: {:?}", prog);
             prog.resolve_args("")?; // noop for client
-            prog.execute(shared_stream_map, tmp_folder)
+            match prog.execute(shared_stream_map, tmp_folder) {
+                Ok(_) => {
+                    println!("Client executed successfully!");
+                    return Ok(());
+                }
+                Err(e) => {
+                    println!("Client failed with error e: {:?}", e);
+                    return Err(e);
+                }
+            }
         }
         Location::Server(ip) => {
             println!("asking {:?} to execute subprogram", ip);
@@ -287,14 +302,13 @@ fn execute_subprogram(
             println!("waiting for the server to respond");
             let (_, next_msg) = read_msg_and_type(&mut stream)?;
             let msg = deserialize(&next_msg[..])?;
-            println!("server responded ugh");
             match msg {
                 rpc::ClientReturnCode::Success => {
-                    println!("Want to also kill the client now");
-                    println!("Server returned success");
+                    println!("Server returned success: {:?}", ip);
                     return Ok(());
                 }
                 rpc::ClientReturnCode::Failure => {
+                    println!("Server failed to execute: {:?}", ip);
                     bail!("Server returned failure to execute program.")
                 }
             }

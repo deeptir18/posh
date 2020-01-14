@@ -898,8 +898,8 @@ fn copy_into_stdin(
                 }
             }
         }
-        metadata.remove_files()?;
     }
+    metadata.remove_files()?;
     Ok(())
 }
 

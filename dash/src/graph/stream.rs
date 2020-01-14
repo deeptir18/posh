@@ -214,6 +214,13 @@ impl FileStream {
         }
     }
 
+    pub fn open_with_append(&self) -> Result<File> {
+        let mut open_options = OpenOptions::new();
+        open_options.write(true).append(true);
+        let file = open_options.open(self.name.clone())?;
+        Ok(file)
+    }
+
     pub fn open(&self) -> Result<File> {
         let mut open_options = OpenOptions::new();
         match self.mode {
