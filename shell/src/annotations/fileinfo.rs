@@ -94,7 +94,6 @@ impl FileMap {
             };
             ret.insert(file.to_string(), ip.to_string());
         }
-        println!("filemap: {:?}", ret);
         Ok(FileMap {
             map: ret,
             cache: HashMap::default(),
@@ -136,14 +135,8 @@ impl FileMap {
                     .as_path()
                     .strip_prefix(rel_path)
                     .expect("Not a prefix");
-                println!(
-                    "rel_path: {:?}, cur_loc: {:?}, cur_relative: {:?}",
-                    rel_path, cur_loc, cur_relative
-                );
-
                 let mut result = Path::new(&cached_full.full_path).to_path_buf();
                 result.push(cur_relative);
-                println!("final ful: {:?}", result);
                 filestream.set_name(result.to_str().unwrap());
                 let mount = entry.mount.clone();
                 let ip = entry.ip.clone();
@@ -161,11 +154,8 @@ impl FileMap {
         // first, canonicalize the path
         match filestream.dash_cannonicalize(pwd) {
             Ok(_) => {}
-            Err(e) => {
-                println!("Could not canonicalize fs: {:?} -> {:?}", filestream, e);
-            }
+            Err(e) => {}
         }
-        println!("filestream after cannoc: {:?}", filestream);
         let mut new_path = Path::new(&filestream.get_name()).to_path_buf();
         if !new_path.as_path().is_dir() {
             new_path.pop();
@@ -177,8 +167,6 @@ impl FileMap {
                 // add this into the cache
                 new_cache_entry.mount = mount.clone();
                 new_cache_entry.ip = ip.clone();
-                println!("entry:{:?}", new_cache_entry);
-                println!("mutilated filestream name: {:?}", filestream.get_name());
                 self.cache
                     .insert(new_cache_entry.rel_path.clone(), new_cache_entry);
                 return Some((mount.clone(), ip.clone()));
@@ -189,7 +177,6 @@ impl FileMap {
 
     /// Check which mount the pwd resolves to, if any
     pub fn find_current_dir_match(&self, pwd: &PathBuf) -> Option<(String, String)> {
-        println!("checking for {:?}", pwd);
         for (mount, ip) in self.map.iter() {
             if Path::new(pwd).starts_with(Path::new(mount)) {
                 return Some((mount.clone(), ip.clone()));
@@ -268,12 +255,7 @@ impl FileMap {
             Location::Client => match self.find_match(filestream, pwd) {
                 Some((mount, ip)) => {
                     filestream.set_location(Location::Server(ip));
-                    println!(
-                        "Found match, but trying to strip prefix: {:?} mount -> {:?}",
-                        filestream, mount
-                    );
                     filestream.strip_prefix(&mount)?;
-                    println!("filestream now: {:?}", filestream);
                     Ok(())
                 }
                 None => Ok(()),

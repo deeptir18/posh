@@ -100,7 +100,8 @@ where
             for i in 0..metadata.get_size() {
                 let mut tmpfile = &file_handles[i];
                 println!("Node {:?} Trying to copy {:?}", node_id, i);
-                copy(&mut tmpfile, writer)?;
+                let size = copy(&mut tmpfile, writer)?;
+                println!("Node {:?} copied {:?}", node_id, size);
             }
             metadata.set_current_finished();
         }

@@ -309,7 +309,6 @@ impl Interpreter {
                             new_options.set_reduces_input(true);
                         }
                         if options.needs_current_dir {
-                            println!("node: {:?} needs current dir;", command_node.get_name());
                             new_options.set_needs_current_dir(true);
                             // need to set the pwd of the node
                             command_node.set_pwd(self.pwd.as_path());
@@ -611,7 +610,6 @@ impl Interpreter {
     /// SOMEWHERE, NEED TO MODIFY THE NECESSARY PIPES TO BE TCP STREAMS!
     pub fn assign_program_location(&mut self, prog: &mut Program) -> Result<()> {
         // iterate through nodes and assign any mandatory locations
-        println!("In assign location function");
         let mandatory_location = |locs: Vec<Location>| -> Option<Location> {
             let mut set: HashSet<Location> = HashSet::from_iter(locs);
             match set.len() {
@@ -653,7 +651,6 @@ impl Interpreter {
                     // if this cmdnode implicitly relies on the current dir, assign it
                     if cmdnode.get_options().get_needs_current_dir() {
                         // check what mount the current dir is in
-                        println!("Checking needs current dir for current pwd!");
                         match self.filemap.find_current_dir_match(&self.pwd) {
                             Some((mount, ip)) => {
                                 cmdnode.set_loc(Location::Server(ip.clone()));
