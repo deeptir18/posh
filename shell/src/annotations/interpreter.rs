@@ -23,6 +23,7 @@ use std::env;
 use std::f64;
 use std::iter::FromIterator;
 use std::path::PathBuf;
+use tracing::{debug, error};
 
 pub struct Interpreter {
     pub parsers: HashMap<String, Parser>,
@@ -114,7 +115,7 @@ impl Interpreter {
         self.resolve_filestreams(&mut program)?;
         // apply location algorithm
         self.assign_program_location(&mut program)?;
-        //println!("program: {:?}", program);
+        debug!("program: {:?}", program);
         // write the program somewhere
         /*let dot_path = "/home/deeptir/research/fs_project/tmp/distributed.dot";
         let graph_path = "/home/deeptir/research/fs_project/tmp/distributed.pdf";
@@ -168,7 +169,7 @@ impl Interpreter {
                                             arg.push_str(&val);
                                         }
                                         Err(e) => {
-                                            println!("Couldn't resolve: {:?} -> {:?}", arg, e);
+                                            error!("Couldn't resolve: {:?} -> {:?}", arg, e);
                                         }
                                     }
                                 }
@@ -775,7 +776,7 @@ mod test {
                 "cat /d/c/b/1.INFO | grep '[RAY]' | head -n1 | cut -c 7- > /d/c/b/rays.csv",
             )
             .unwrap();
-        println!("expected program: {:?}", program);
+        info!("expected program: {:?}", program);
     }
 
     #[test]
@@ -784,7 +785,7 @@ mod test {
         let program = interpreter.parse_cmd_graph(
             "mogrify  -format gif -path thumbs_dir -thumbnail 100x100 data_dir/1.jpg data_dir/2.jpg"
         ).unwrap();
-        println!("expected program: {:?}", program);
+        info!("expected program: {:?}", program);
     }
 
     #[test]

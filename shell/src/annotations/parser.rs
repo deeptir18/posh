@@ -13,6 +13,7 @@ use shellwords::split;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
+use tracing::{debug, error};
 
 // Tries to run glob on input and returns a pathbuf
 fn glob_wrapper(input: String) -> Result<Vec<String>> {
@@ -431,7 +432,7 @@ impl Parser {
                                             }
                                         }
                                         Err(_) => {
-                                            println!("glob failed!");
+                                            error!("glob failed!");
                                             size += 1;
                                         }
                                     }
@@ -803,12 +804,12 @@ impl Parser {
                 }
                 Err(e) => {
                     if self.debug {
-                        println!("Failed to parse: {:?}", e);
+                        debug!("Failed to parse: {:?}", e);
                     }
                 }
             }
         }
-        println!(
+        debug!(
             "Warning: invocation {:?} was not parsed by any parsers",
             invocation
         );
@@ -818,7 +819,7 @@ impl Parser {
     }
 
     fn default_parse(&mut self, mut invocation: Vec<String>) -> Result<grammar::ParsedCommand> {
-        println!("invocation: {:?}", invocation);
+        debug!("invocation: {:?}", invocation);
         let command = invocation.remove(0);
         if command != self.name {
             bail!("Invocation does not include initial command name");

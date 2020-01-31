@@ -11,6 +11,7 @@ use std::io::{copy, Read, Write};
 use std::path::{Path, PathBuf};
 use std::{thread, time};
 use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
+use tracing::debug;
 
 const READ_BUFFER_SIZE: usize = 4096;
 
@@ -40,14 +41,14 @@ where
     R: Read,
     W: Write,
 {
-    //println!("in iterating redirect {:?}, idx {:?}", node_id, idx);
+    //debug!("in iterating redirect {:?}, idx {:?}", node_id, idx);
     // optimization: if there is one input stream,
     // directly copy from the reader to the writer
     // and increment the count
     if metadata.get_size() == 1 {
-        println!("In case where metadata size is 1 for node {:?}; about to run copy from input to output", node_id);
+        debug!("In case where metadata size is 1 for node {:?}; about to run copy from input to output", node_id);
         let s = copy_wrapper(reader, writer)?;
-        println!("Node {:?} finished stdin copy", node_id);
+        debug!("Node {:?} finished stdin copy", node_id);
         metadata.increment_bytes(0, s);
         metadata.set_finished(0);
         metadata.increment_current();
@@ -66,15 +67,15 @@ where
                 // make sure to ONLY write what was read into the writer
                 if s == 0 {
                     metadata.set_finished_tmp(idx);
-                //println!("Node {:?} Finished reading tmpfile for # {}", node_id, idx);
+                //debug!("Node {:?} Finished reading tmpfile for # {}", node_id, idx);
                 } else {
-                    /*println!(
+                    /*debug!(
                         "about to write into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
                         s, node_id, idx
                     );*/
                     tmpfile.write_all(&buf[..s])?;
                     tmpfile.flush()?;
-                    /*println!(
+                    /*debug!(
                         "wrote and flushed into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
                         s, node_id, idx
                     );*/
@@ -95,13 +96,13 @@ where
     } else {
         // check if all finished, copy everything
         if metadata.all_finished() {
-            println!("All finished");
+            debug!("All finished");
             let file_handles = metadata.open_read_only_files()?;
             for i in 0..metadata.get_size() {
                 let mut tmpfile = &file_handles[i];
-                println!("Node {:?} Trying to copy {:?}", node_id, i);
+                debug!("Node {:?} Trying to copy {:?}", node_id, i);
                 let size = copy(&mut tmpfile, writer)?;
-                println!("Node {:?} copied {:?}", node_id, size);
+                debug!("Node {:?} copied {:?}", node_id, size);
             }
             metadata.set_current_finished();
         }
@@ -109,7 +110,7 @@ where
     }
 
     /*if idx == metadata.current() {
-        /*println!(
+        /*debug!(
             "in iterating redirect {:?}, idx {:?}, current: {:?} is current!",
             node_id,
             idx,
@@ -119,26 +120,26 @@ where
         // if we haven't yet
         if !metadata.get_finished_tmp(idx) {
             let tmpfile = &tmp_handles[idx];
-            /*println!(
+            /*debug!(
                 "Trying to get metadata for {:?}; node id {:?}",
                 idx, node_id
             );*/
             let file_metadata = tmpfile.metadata()?;
-            //println!("Got metadata for {:?}; node id {:?}", idx, node_id);
+            //debug!("Got metadata for {:?}; node id {:?}", idx, node_id);
             if file_metadata.len() > 0 {
-                /*println!(
+                /*debug!(
                     "Node id {:?}, trying to open {:?}, for idx {:?}",
                     node_id,
                     metadata.get_filename(idx),
                     idx
                 );*/
                 let mut new_tmpfile_handle = File::open(metadata.get_filename(idx).as_path())?;
-                println!(
+                debug!(
                     "node {:?}, copying from tmpfile into writer for idx {:?}",
                     node_id, idx
                 );
                 let _ = copy_wrapper(&mut new_tmpfile_handle, writer)?;
-                println!(
+                debug!(
                     "node {:?}, finished copying from tmpfile into writer",
                     node_id
                 );
@@ -148,7 +149,7 @@ where
         if metadata.finished(idx) {
             metadata.increment_current();
         } else {
-            //println!("Node {:?} Continuing to read from {:?}", node_id, idx);
+            //debug!("Node {:?} Continuing to read from {:?}", node_id, idx);
             let mut buf = [0u8; READ_BUFFER_SIZE];
             match read_rapper(reader, &mut buf) {
                 Ok(s) => {
@@ -157,7 +158,7 @@ where
                     if s == 0 {
                         metadata.set_finished(idx);
                         metadata.increment_current();
-                        println!(" {:?} Finished reading from {:?}", node_id, idx);
+                        debug!(" {:?} Finished reading from {:?}", node_id, idx);
                     }
 
                     // make sure to ONLY write what was read into the writer
@@ -181,7 +182,7 @@ where
             }
         }
     } else {
-        /*println!(
+        /*debug!(
             "idx that is greater than current: {:?}, current is {:?}, node id: {:?}",
             idx,
             metadata.current(),
@@ -198,15 +199,15 @@ where
                 // make sure to ONLY write what was read into the writer
                 if s == 0 {
                     metadata.set_finished(idx);
-                //println!("Finished reading tmpfile for # {}", idx);
+                //debug!("Finished reading tmpfile for # {}", idx);
                 } else {
-                    /*println!(
+                    /*debug!(
                         "about to write into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
                         s, node_id, idx
                     );*/
                     tmpfile.write_all(&buf[..s])?;
                     tmpfile.flush()?;
-                    /*println!(
+                    /*debug!(
                         "wrote and flushed into tmpfile because read {:?} bytes, node {:?}, idx {:?}",
                         s, node_id, idx
                     );*/
@@ -223,7 +224,7 @@ where
             },
         }
     }
-    /*println!(
+    /*debug!(
         "returning from this terrible function for NODE ID {:?} and idx {:?}",
         node_id, idx
     );*/
@@ -353,7 +354,7 @@ impl InputStreamMetadata {
 
     /// Remove the temporary files.
     pub fn remove_files(&self) -> Result<()> {
-        println!("trying to remove: {:?}", self.filenames);
+        debug!("trying to remove: {:?}", self.filenames);
         if self.filenames.len() > 1 {
             for filename in self.filenames.iter() {
                 remove_file(filename.as_path())?;

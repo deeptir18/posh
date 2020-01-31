@@ -17,6 +17,7 @@ use stream::{
     SharedPipeMap, SharedStreamMap,
 };
 use thread::{spawn, JoinHandle};
+use tracing::debug;
 use which::which;
 
 /// CommandNodes, which have args, are either file streams OR Strings.
@@ -622,15 +623,15 @@ impl Rapper for CommandNode {
         cmd.args(self.resolved_args.clone());
 
         if self.stdin.len() > 0 {
-            println!("setting stdin for {:?} to be stdio::piped", self.node_id);
+            debug!("setting stdin for {:?} to be stdio::piped", self.node_id);
             cmd.stdin(Stdio::piped());
         }
         if self.stdout.len() > 0 {
-            println!("setting stdout for {:?} to be stdio::piped", self.node_id);
+            debug!("setting stdout for {:?} to be stdio::piped", self.node_id);
             cmd.stdout(Stdio::piped());
         }
         if self.stderr.len() > 0 {
-            println!("setting stderr for {:?} to be stdio::piped", self.node_id);
+            debug!("setting stderr for {:?} to be stdio::piped", self.node_id);
             cmd.stderr(Stdio::piped());
         }
         let child = match cmd.spawn() {
@@ -639,14 +640,14 @@ impl Rapper for CommandNode {
                 bail!("Failed to spawn child: {:?}", e);
             }
         };
-        println!("spawned cmd: {:?}", cmd);
+        debug!("spawned cmd: {:?}", cmd);
 
         if self.stdin.len() > 0 {
             let stdin_handle = match child.stdin {
                 Some(h) => h,
                 None => bail!("Could not get stdin handle for proc"),
             };
-            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stdin));
+            debug!("Inserting {:?}", self.get_handle_identifier(IOType::Stdin));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stdin),
                 OutputHandle::Stdin(stdin_handle),
@@ -658,7 +659,7 @@ impl Rapper for CommandNode {
                 Some(h) => h,
                 None => bail!("Could not get handle for child stdout"),
             };
-            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stdout));
+            debug!("Inserting {:?}", self.get_handle_identifier(IOType::Stdout));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stdout),
                 OutputHandle::Stdout(stdout_handle),
@@ -671,7 +672,7 @@ impl Rapper for CommandNode {
                 None => bail!("Could not get handle for child stderr"),
             };
 
-            println!("Inserting {:?}", self.get_handle_identifier(IOType::Stderr));
+            debug!("Inserting {:?}", self.get_handle_identifier(IOType::Stderr));
             pipes.insert(
                 self.get_handle_identifier(IOType::Stderr),
                 OutputHandle::Stderr(stderr_handle),
@@ -696,7 +697,7 @@ impl Rapper for CommandNode {
             let stdin_pipes = pipes.clone();
             let stdin_connections = network_connections.clone();
             let stdin_id = self.node_id;
-            println!(
+            debug!(
                 "About to spawn thread for copying into stdin for node: {:?}",
                 self.node_id
             );
@@ -832,7 +833,7 @@ fn copy_into_stdin(
     tmp_folder: String,
 ) -> Result<()> {
     let mut metadata = InputStreamMetadata::new(node_id, &tmp_folder, stdin_streams.len());
-    println!("In function to copy into stdin for node: {:?}", node_id);
+    debug!("In function to copy into stdin for node: {:?}", node_id);
     let stdin_handle_option: Option<ChildStdin> = handle.into();
     let mut stdin_handle = stdin_handle_option.unwrap();
     let mut tmp_handles = metadata.open_files()?;
@@ -929,7 +930,7 @@ fn copy_stdout(
                         e
                     ),
                 };
-                println!(
+                debug!(
                     "copying stdout of cmd {:?} into tcp stream {:?}",
                     node_id, netstream
                 );

@@ -13,6 +13,7 @@ use stream::{
     DashStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream, SharedPipeMap,
     SharedStreamMap,
 };
+use tracing::debug;
 /// Node that writes stdin to a specified file.
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct WriteNode {
@@ -286,7 +287,7 @@ impl Rapper for WriteNode {
                                 // right now, hack. Fix this properly later by passing an option to
                                 // iterating_redirect
                                 if self.stdin.len() == 1 {
-                                    println!("setting up non blocking FALSE");
+                                    debug!("setting up non blocking FALSE");
                                     tcpstream.set_nonblocking(false)?;
                                 }
                                 // need to open this in APPEND mode
@@ -305,7 +306,7 @@ impl Rapper for WriteNode {
                                 // right now, hack. Fix this properly later by passing an option to
                                 // iterating_redirect
                                 if self.stdin.len() == 1 {
-                                    println!("setting non blocking");
+                                    debug!("setting non blocking");
                                     tcpstream.set_nonblocking(false)?;
                                 }
                                 iterating_redirect(
@@ -321,7 +322,7 @@ impl Rapper for WriteNode {
                                 // right now, hack. Fix this properly later by passing an option to
                                 // iterating_redirect
                                 if self.stdin.len() == 1 {
-                                    println!("setting non blocking");
+                                    debug!("setting non blocking");
                                     tcpstream.set_nonblocking(false)?;
                                 }
                                 iterating_redirect(
@@ -341,7 +342,7 @@ impl Rapper for WriteNode {
                     DashStream::Pipe(pipestream) => {
                         let mut output_handle = input_pipestreams.get_mut(&idx).unwrap();
                         if self.stdin.len() == 1 {
-                            println!(
+                            debug!(
                                 "Running write stdin function for node {:?} for pipe {:?}",
                                 self.node_id, pipestream
                             );

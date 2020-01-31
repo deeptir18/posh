@@ -9,6 +9,8 @@ use shell::annotations::shell_parse;
 use std::path::Path;
 use std::process::Command;
 use structopt::StructOpt;
+use tracing::{error, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -34,6 +36,14 @@ fn main() {
     let opt = Opt::from_args();
     let output_folder = opt.output_folder;
     let dot_binary = opt.dot_binary;
+    // global tracing settings
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
     run_viz(
         &dot_binary,
         "cat /d/c/b/1.INFO | grep '[RAY]' | head -n1 | cut -c 7- > /d/c/b/rays.csv",
@@ -115,13 +125,13 @@ fn run_viz(dot_binary: &str, cmd: &str, name: &str, output_folder: &str, viztype
         VizType::Shell => match visualize_shell_graph(dot_binary, cmd, name, output_folder) {
             Ok(_) => {}
             Err(e) => {
-                println!("Failed to visualize shell graph: {:?}", e);
+                error!("Failed to visualize shell graph: {:?}", e);
             }
         },
         VizType::Dash => match visualize_dash_graph(dot_binary, cmd, name, output_folder) {
             Ok(_) => {}
             Err(e) => {
-                println!("Failed to visualize dash graph: {:?}", e);
+                error!("Failed to visualize dash graph: {:?}", e);
             }
         },
     }

@@ -605,27 +605,27 @@ impl ShellSplit {
         let mut parts = self.elts.split(|elt| elt.clone() == RawShellElement::Pipe);
         // merge all parts into the top level graph.
         while let Some(subcmd) = parts.next() {
-            //println!("next part: {:?}", subcmd);
+            //debug!("next part: {:?}", subcmd);
             let new_subgraph = get_subgraph(subcmd)?;
-            //println!("new subgraph: {:?}", new_subgraph);
+            //debug!("new subgraph: {:?}", new_subgraph);
             if graph.nodes.len() == 0 {
-                /*println!(
+                /*debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );*/
                 graph.merge(new_subgraph, None)?;
-            //println!("new graph nodes: {:?}", graph.nodes.keys());
+            //debug!("new graph nodes: {:?}", graph.nodes.keys());
             } else {
                 // TODO: this accessing of the first value of front and sink doesn't really scale
                 let graph_end = graph.get_end()[0];
                 let subgraph_front = new_subgraph.get_front()[0];
-                /*println!(
+                /*debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );
-                println!(
+                debug!(
                     "proposed link: {:?}",
                     ShellLink {
                         left: graph_end,
@@ -642,7 +642,7 @@ impl ShellSplit {
                         false,
                     )),
                 )?;
-                //println!("new graph nodes: {:?}", graph.nodes.keys());
+                //debug!("new graph nodes: {:?}", graph.nodes.keys());
             }
         }
         Ok(graph)
@@ -734,7 +734,7 @@ mod test {
         let shell_split = ShellSplit::new(cmd).unwrap();
         let shell_prog = shell_split.convert_into_shell_graph().unwrap();
         let program = shell_prog.convert_into_program().unwrap();
-        println!("program: {:?}", program);
+        debug!("program: {:?}", program);
     }
 
     #[test]
@@ -743,27 +743,27 @@ mod test {
         match ShellSplit::new(cmd) {
             Ok(shell_split) => match shell_split.convert_into_shell_graph() {
                 Ok(shell_prog) => {
-                    println!("shell prog: {:?}", shell_prog);
-                    println!("________");
+                    debug!("shell prog: {:?}", shell_prog);
+                    debug!("________");
                     match shell_prog.convert_into_program() {
                         Ok(p) => {
-                            println!("Program!");
-                            println!("{:?}", p);
+                            debug!("Program!");
+                            debug!("{:?}", p);
                             //assert!(false);
                         }
                         Err(e) => {
-                            println!("Failed to convert shell split into program: {:?}", e);
+                            debug!("Failed to convert shell split into program: {:?}", e);
                             assert!(false);
                         }
                     }
                 }
                 Err(e) => {
-                    println!("Failed to convert split into program: {:?}", e);
+                    debug!("Failed to convert split into program: {:?}", e);
                     assert!(false);
                 }
             },
             Err(e) => {
-                println!("Failed to divide into shell split: {:?}", e);
+                debug!("Failed to divide into shell split: {:?}", e);
                 assert!(false);
             }
         }
@@ -775,14 +775,14 @@ mod test {
         match ShellSplit::new(cmd) {
             Ok(shell_split) => match shell_split.convert_into_shell_graph() {
                 Ok(shell_prog) => {
-                    println!("Prog: {:?}", shell_prog);
+                    debug!("Prog: {:?}", shell_prog);
                 }
                 Err(e) => {
-                    println!("{:?}", e);
+                    debug!("{:?}", e);
                 }
             },
             Err(e) => {
-                println!("Failed to parse command into shell split: {:?}", e);
+                debug!("Failed to parse command into shell split: {:?}", e);
                 assert!(false);
             }
         };

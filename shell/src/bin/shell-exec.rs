@@ -13,6 +13,8 @@ use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::exit;
 use structopt::StructOpt;
+use tracing::{error, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "shell_exec", help = "Shell to execute dash binaries")]
@@ -69,10 +71,20 @@ fn main() {
     let given_pwd = opt.pwd;
     let tmp_file = opt.tmp_file;
     let splitting_factor: u32 = opt.splitting_factor;
+
+    // global tracing settings
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
+
     let mut pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to find current dir: {:?}", e);
+            error!("Failed to find current dir: {:?}", e);
             exit(exitcode::USAGE);
         }
     };
@@ -85,7 +97,10 @@ fn main() {
         match client::ShellClient::new(&runtime_port, &mount_info, pwd.clone(), &tmp_file) {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("Failed to construct a shell with given mount file: {:?}", e);
+                error!(
+                    "Failed to construct a shell with the given mount file: {:?}",
+                    e
+                );
                 exit(exitcode::USAGE);
             }
         };
@@ -93,8 +108,8 @@ fn main() {
     let mut interpreter = match interpreter::Interpreter::new(&annotation_file, &mount_info) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!(
-                "Failed to construct intepreter with given mount file and annotation file: {:?}",
+            error!(
+                "Failed to construct interpreter with given mount file and annotation file: {:?}",
                 e
             );
             exit(exitcode::USAGE);
@@ -107,7 +122,7 @@ fn main() {
     let file = match File::open(binary) {
         Ok(f) => f,
         Err(e) => {
-            eprintln!("Failed to open binary file: {:?}", e);
+            error!("Failed to open binary file: {:?}", e);
             exit(exitcode::OSFILE);
         }
     };
@@ -117,7 +132,7 @@ fn main() {
         let line = match line {
             Ok(l) => l,
             Err(e) => {
-                eprintln!("Failed to read line from binary: {:?}", e);
+                error!("Failed to read line from binary: {:?}", e);
                 exit(exitcode::USAGE);
             }
         };
@@ -125,7 +140,7 @@ fn main() {
         match run_cmd(&line, &mut interpreter, &mut client) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Failed to run line: {:?} with err {:?}", &line, e);
+                error!("Failed to run line: {:?} with err {:?}", &line, e);
                 exit(exitcode::USAGE);
             }
         }

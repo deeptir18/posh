@@ -14,6 +14,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::*;
 use stream::FileStream;
+use tracing::debug;
 /// Map of mount to IP addresses
 pub struct FileMap {
     map: HashMap<String, String>,
@@ -154,7 +155,9 @@ impl FileMap {
         // first, canonicalize the path
         match filestream.dash_cannonicalize(pwd) {
             Ok(_) => {}
-            Err(e) => {}
+            Err(e) => {
+                debug!("Could not cannonicalize path: {:?}", e);
+            }
         }
         let mut new_path = Path::new(&filestream.get_name()).to_path_buf();
         if !new_path.as_path().is_dir() {

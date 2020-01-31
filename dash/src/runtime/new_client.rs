@@ -15,6 +15,7 @@ use std::str;
 use std::thread;
 use stream::{NetStream, SharedStreamMap};
 use thread::JoinHandle;
+use tracing::{debug, error, info};
 
 pub type MountMap = HashMap<Addr, String>;
 named_complete!(
@@ -137,7 +138,7 @@ impl ShellClient {
                     port,
                     tmp_folder,
                 );
-                println!("One of threads joined: {:?}", location);
+                debug!("One of threads joined: {:?}", location);
                 ret
             }));
         }
@@ -230,7 +231,7 @@ fn run_stream_setup(
             Ok(())
         }
         Location::Server(ip) => {
-            println!("setup thread to {:?}", ip);
+            debug!("setup thread to {:?}", ip);
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
             let info = rpc::NetworkStreamInfo {
@@ -274,21 +275,21 @@ fn execute_subprogram(
     match loc {
         Location::Client => {
             // execute the subprogram
-            println!("executing following subprogram locally: {:?}", prog);
+            debug!("executing following subprogram locally: {:?}", prog);
             prog.resolve_args("")?; // noop for client
             match prog.execute(shared_stream_map, tmp_folder) {
                 Ok(_) => {
-                    println!("Client executed successfully!");
+                    info!("Client executed successfully!");
                     return Ok(());
                 }
                 Err(e) => {
-                    println!("Client failed with error e: {:?}", e);
+                    error!("Client failed with error e: {:?}", e);
                     return Err(e);
                 }
             }
         }
         Location::Server(ip) => {
-            println!("asking {:?} to execute subprogram", ip);
+            debug!("asking {:?} to execute subprogram", ip);
             // send a request to the server to execute this subprogram
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
@@ -299,16 +300,16 @@ fn execute_subprogram(
                 &mut stream,
             )?;
             stream.set_nonblocking(false)?;
-            println!("waiting for the server to respond");
+            debug!("waiting for the server to respond");
             let (_, next_msg) = read_msg_and_type(&mut stream)?;
             let msg = deserialize(&next_msg[..])?;
             match msg {
                 rpc::ClientReturnCode::Success => {
-                    println!("Server returned success: {:?}", ip);
+                    info!("Server returned success for program execution: {:?}", ip);
                     return Ok(());
                 }
                 rpc::ClientReturnCode::Failure => {
-                    println!("Server failed to execute: {:?}", ip);
+                    error!("Server failed to execute: {:?}", ip);
                     bail!("Server returned failure to execute program.")
                 }
             }

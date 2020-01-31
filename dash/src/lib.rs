@@ -13,6 +13,7 @@ use crate::runtime::new_runtime::{ClientMap, ServerRuntime};
 use crate::runtime::runtime::ShellServer;
 use crate::runtime::runtime_util::Server;
 use std::thread;
+use tracing::error;
 
 pub fn start_shell(runtime_port: &str, client_folder: &str, debug: bool) {
     let localhost = "0.0.0.0";
@@ -20,7 +21,7 @@ pub fn start_shell(runtime_port: &str, client_folder: &str, debug: bool) {
     let child = thread::spawn(move || match shell_server.handle_incoming() {
         Ok(_) => unreachable!(),
         Err(e) => {
-            println!("Shell server error: {:?}", e);
+            error!("Shell server error: {:?}", e);
         }
     });
     let _ = child.join();
@@ -33,7 +34,7 @@ pub fn start_runtime(runtime_port: &str, client_map: ClientMap, debug: bool, tmp
     let child = thread::spawn(move || match runtime.handle_incoming() {
         Ok(_) => unreachable!(),
         Err(e) => {
-            println!("Shell server error: {:?}", e);
+            error!("Shell server error: {:?}", e);
         }
     });
     let _ = child.join();

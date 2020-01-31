@@ -10,6 +10,8 @@ use std::env::current_dir;
 use std::io::{stdin, stdout, Write};
 use std::process;
 use structopt::StructOpt;
+use tracing::{error, Level};
+use tracing_subscriber::FmtSubscriber;
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "shell_binary",
@@ -50,17 +52,26 @@ fn main() {
     let annotation_file = opt.annotation_file;
     let tmp_file = opt.tmp_file;
 
+    // global tracing settings
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
+
     let pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to get pwd: {:?}", e);
+            error!("Failed to get pwd: {:?}", e);
             process::exit(exitcode::USAGE);
         }
     };
     let mut client = match client::ShellClient::new(&runtime_port, &mount_file, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Failed to construct shell client with given mount file: {:?}",
                 e
             );
@@ -71,7 +82,7 @@ fn main() {
     let mut interpreter = match interpreter::Interpreter::new(&annotation_file, &mount_file) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Failed to construct interpreter with given mount file and annotation file: {:?}",
                 e
             );
@@ -85,22 +96,22 @@ fn main() {
         let cmd = match readline() {
             Ok(s) => s,
             Err(e) => {
-                println!("Failed to read line: {:?}", e);
+                error!("Failed to read line: {:?}", e);
                 continue;
             }
         };
         match interpreter.parse_cmd_graph(&cmd) {
             Ok(p) => {
-                println!("parsed program: {:?}", p);
+                error!("parsed program: {:?}", p);
                 match run_program(p, &mut client) {
                     Ok(_) => {}
                     Err(e) => {
-                        println!("{:?}", e);
+                        error!("{:?}", e);
                     }
                 }
             }
             Err(e) => {
-                println!("Failed to parse: {} -> {:?}", cmd, e);
+                error!("Failed to parse: {} -> {:?}", cmd, e);
             }
         }
     }

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::{fs, thread};
 use stream::SharedStreamMap;
+use tracing::{debug, error, info};
 /// matches client IP to folder name
 pub type ClientMap = HashMap<IpAddr, String>;
 
@@ -104,13 +105,13 @@ impl Server for ServerRuntime {
                             tmp,
                         ) {
                             Ok(_) => {
-                                println!(
+                                info!(
                                     "{}: Successfully handled request from {}",
                                     server_name, peer_addr
                                 );
                             }
                             Err(e) => {
-                                println!(
+                                error!(
                                     "{}: Error handling request from {}: {:?}",
                                     server_name, peer_addr, e
                                 );
@@ -120,7 +121,7 @@ impl Server for ServerRuntime {
                 }
                 Err(e) => {
                     if self.debug {
-                        println!(
+                        error!(
                             "{}: Err handling client stream: {:?}",
                             self.server_name(),
                             e
@@ -187,7 +188,7 @@ fn handle_spawned_client(
             let response = match program.execute(stream_map, tmp_folder) {
                 Ok(_) => serialize(&rpc::ClientReturnCode::Success)?,
                 Err(e) => {
-                    println!("Could not execute program because {:?}", e);
+                    error!("Could not execute program because {:?}", e);
                     serialize(&rpc::ClientReturnCode::Failure)?
                 }
             };
@@ -206,7 +207,7 @@ fn handle_spawned_client(
             };
 
             // insert this stream into the client's map
-            println!("received stream: {:?}", stream_info);
+            debug!("received stream: {:?}", stream_info);
             let stream_clone = stream.try_clone()?;
             stream_map.insert(stream_info.netstream, stream_clone)?;
 

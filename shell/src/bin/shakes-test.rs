@@ -10,6 +10,8 @@ use shell::annotations::interpreter;
 use std::env::current_dir;
 use std::process::exit;
 use structopt::StructOpt;
+use tracing::{debug, error, Level};
+use tracing_subscriber::FmtSubscriber;
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -54,15 +56,24 @@ fn main() {
     let pwd = match current_dir() {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("Failed to find current dir: {:?}", e);
+            error!("Failed to find current dir: {:?}", e);
             exit(exitcode::USAGE);
         }
     };
 
+    // global tracing settings
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
+
     let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Failed to construct shell client with given mount file: {:?}",
                 e
             );
@@ -73,7 +84,7 @@ fn main() {
     let mut interpreter = match interpreter::Interpreter::new(&annotation_file, &mount_info) {
         Ok(i) => i,
         Err(e) => {
-            eprintln!(
+            error!(
                 "Failed to construct intepreter with given mount file and annotation file: {:?}",
                 e
             );
@@ -82,13 +93,9 @@ fn main() {
     };
 
     match test_cmd("cat /home/deeptir/mnt/dash_server/shakes_new.txt | wc | awk '{print \"Lines: \" $1 \"\tWords: \" $2 \"\tCharacter: \" $3 }' > /home/deeptir/research/fs_project/client_folders/local_extra/foo.txt", &mut interpreter, &mut client) {
-        Ok(_) => println!("Successfully ran command remotely while directing output to file"),
-        Err(e) => println!("Failed to run command: {:?}", e),
+        Ok(_) => debug!("Successfully ran command remotely while directing output to file"),
+        Err(e) => error!("Failed to run command: {:?}", e),
     }
-    /*match test_cmd("cat /home/deeptir/research/fs_project/client_folders/local/shakes_new.txt | grep -f /home/deeptir/research/fs_project/client_folders/local_extra/grep_patterns.txt > foo.txt", &mut interpreter, &mut client) {
-        Ok(_) => println!("Successfully ran command remotely while directing output locally"),
-        Err(e) => println!("Failed to run command: {:?}", e),
-    }*/
 }
 
 fn test_cmd(

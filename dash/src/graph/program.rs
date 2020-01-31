@@ -15,6 +15,7 @@ use thread::{spawn, JoinHandle};
 pub type NodeId = u32;
 pub type ProgId = u32;
 use std::io::Write;
+use tracing::debug;
 
 /// Elements can be read, write, or command nodes
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -1033,7 +1034,7 @@ impl Program {
                     for stream in cmdnode.get_stdin_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                println!("modifying pipstream: {:?}", pipestream);
+                                debug!("modifying pipstream: {:?}", pipestream);
                                 pipestream.set_left(*left);
                                 pipestream.set_right(*right);
                             }
@@ -1423,7 +1424,7 @@ impl Program {
         // theoretically should not break anything else, as stuff is being executed with full paths
         match self.get_current_dir() {
             Some(pathbuf) => {
-                println!("Trying to set current dir on server: {:?}", pathbuf);
+                debug!("Trying to set current dir on server: {:?}", pathbuf);
                 env::set_current_dir(pathbuf.as_path())?;
             }
             None => {}
@@ -1442,7 +1443,7 @@ impl Program {
             let mut node_clone = node.clone();
             // This call is non-blocking
             node_clone.execute(pipe_map_copy, stream_map_copy)?;
-            println!("finished spawning: {:?}", node);
+            debug!("finished spawning: {:?}", node);
         }
 
         // Next, loop over and run redirection commands
@@ -1459,7 +1460,7 @@ impl Program {
             let mut node_clone = node.clone();
             let tmp = tmp_folder.clone();
             // This call is non-blocking
-            println!("about to run redirection for: {:?},", node_id);
+            debug!("about to run redirection for: {:?},", node_id);
             node_threads.push(spawn(move || {
                 node_clone.run_redirection(pipe_map_copy, stream_map_copy, tmp.to_string())
             }));
@@ -1486,7 +1487,7 @@ impl Program {
             }
             count += 1;
         }
-        println!("joined all the threads");
+        debug!("joined all the threads");
 
         Ok(())
     }

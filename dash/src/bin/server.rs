@@ -6,6 +6,9 @@ use std::net::{IpAddr, Ipv4Addr};
 use std::process;
 use std::str::FromStr;
 use structopt::StructOpt;
+use tracing::{error, Level};
+use tracing_subscriber::FmtSubscriber;
+
 #[derive(Debug, StructOpt)]
 #[structopt(
     name = "Server",
@@ -36,11 +39,22 @@ fn main() {
     let client_folder = opt.client_folder;
     let tmp_file = opt.tmp_file;
     let mut client_map: HashMap<IpAddr, String> = HashMap::default();
+
+    // tracing
+    // a builder for `FmtSubscriber`.
+    let subscriber = FmtSubscriber::builder()
+        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
+        // will be written to stdout.
+        .with_max_level(Level::TRACE)
+        // completes the builder.
+        .finish();
+    tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
+
     // local loopback
     let addr = match Ipv4Addr::from_str(&ip_addr) {
         Ok(a) => a,
         Err(e) => {
-            eprintln!("Not valid IPV4Addr: {:?} -> {:?}", ip_addr, e);
+            error!("Not a valid IPV4Addr: {:?} -> {:?}", ip_addr, e);
             process::exit(exitcode::USAGE);
         }
     };
