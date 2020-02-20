@@ -2,9 +2,10 @@ extern crate dash;
 extern crate itertools;
 extern crate shellwords;
 use cmd::{CommandNode, NodeArg};
-use dash::graph::{cmd, program, rapper, read, stream, write, Location};
+use dash::graph::{cmd, filestream, program, rapper, read, stream, write, Location};
 use dash::util::Result;
 use failure::bail;
+use filestream::{FileMode, FileStream};
 use itertools::join;
 use program::{Elem, NodeId, Program};
 use rapper::Rapper;
@@ -15,7 +16,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::Write;
-use stream::{DashStream, FileMode, FileStream, IOType, PipeStream};
+use std::path::Path;
+use stream::{DashStream, IOType, PipeStream};
 use write::WriteNode;
 
 // TODO:
@@ -88,7 +90,7 @@ impl ShellGraphNode {
                             RawShellElement::Str(filename) => {
                                 let mut readnode = ReadNode::default();
                                 readnode.add_stdin(DashStream::File(FileStream::new(
-                                    filename,
+                                    Path::new(&filename),
                                     Location::Client,
                                 )))?;
                                 stdin_nodes.push(readnode);
@@ -107,7 +109,7 @@ impl ShellGraphNode {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
                                 writenode.add_stdout(DashStream::File(FileStream::new(
-                                    filename,
+                                    Path::new(&filename),
                                     Location::Client,
                                 )))?;
                                 stdout_nodes.push(writenode);
@@ -125,7 +127,8 @@ impl ShellGraphNode {
                         match next_elt {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
-                                let mut fs = FileStream::new(filename, Location::Client);
+                                let mut fs =
+                                    FileStream::new(Path::new(&filename), Location::Client);
                                 fs.set_mode(FileMode::APPEND);
                                 writenode.add_stdout(DashStream::File(fs))?;
                                 stdout_nodes.push(writenode);
@@ -144,7 +147,7 @@ impl ShellGraphNode {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
                                 writenode.add_stderr(DashStream::File(FileStream::new(
-                                    filename,
+                                    Path::new(&filename),
                                     Location::Client,
                                 )))?;
                                 stderr_nodes.push(writenode);

@@ -1,3 +1,4 @@
+use super::filestream::FileStream;
 use super::rapper::copy_wrapper as copy;
 use super::rapper::iterating_redirect;
 use super::rapper::{resolve_file_streams, stream_initiate_filter, InputStreamMetadata, Rapper};
@@ -13,8 +14,8 @@ use std::process::{ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
 use std::slice::IterMut;
 use std::thread;
 use stream::{
-    DashStream, FileStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream,
-    SharedPipeMap, SharedStreamMap,
+    DashStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream, SharedPipeMap,
+    SharedStreamMap,
 };
 use thread::{spawn, JoinHandle};
 use tracing::debug;
@@ -339,8 +340,9 @@ impl CommandNode {
         while let Some(arg) = arg_iterator.next() {
             match arg {
                 NodeArg::Stream(fs) => {
-                    fs.prepend_directory(parent_dir)?;
-                    ret.push(fs.get_name());
+                    fs.prepend_directory(&Path::new(parent_dir));
+                    let name = fs.get_name()?;
+                    ret.push(name);
                 }
                 NodeArg::Str(a) => {
                     ret.push(a.clone());
@@ -816,9 +818,9 @@ impl Rapper for CommandNode {
             }
             Err(e) => bail!("Failed to resolve args: {:?}", e),
         }
-        resolve_file_streams(&mut self.stderr, parent_dir)?;
-        resolve_file_streams(&mut self.stdout, parent_dir)?;
-        resolve_file_streams(&mut self.stdin, parent_dir)?;
+        resolve_file_streams(&mut self.stderr, &Path::new(parent_dir));
+        resolve_file_streams(&mut self.stdout, &Path::new(parent_dir));
+        resolve_file_streams(&mut self.stdin, &Path::new(parent_dir));
         Ok(())
     }
 }

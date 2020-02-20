@@ -1,7 +1,5 @@
 extern crate dash;
 
-use dash::util::Result;
-//use failure::bail;
 use super::annotation_parser::parse_annotation_file;
 use super::fileinfo::FileMap;
 use super::grammar::*;
@@ -13,8 +11,10 @@ use cmd::{CommandNode, NodeArg};
 use dash::dag::{node, stream};
 use dash::graph;
 use dash::graph::{cmd, program, rapper, Location};
+use dash::util::Result;
 use failure::bail;
-use graph::stream::{DashStream, FileStream};
+use graph::filestream::FileStream;
+use graph::stream::DashStream;
 use program::{Elem, Node, NodeId, Program};
 use rapper::Rapper;
 use std::collections::{HashMap, HashSet};
@@ -22,6 +22,7 @@ use std::convert::Into;
 use std::env;
 use std::f64;
 use std::iter::FromIterator;
+use std::path::Path;
 use std::path::PathBuf;
 use tracing::{debug, error};
 
@@ -385,7 +386,7 @@ impl Interpreter {
                     }
                     ArgType::InputFile | ArgType::OutputFile => {
                         new_node.add_arg(NodeArg::Stream(FileStream::new(
-                            &arg.0.clone(),
+                            Path::new(&arg.0.clone()),
                             Location::Client,
                         )));
                     }
@@ -409,13 +410,13 @@ impl Interpreter {
                 }
                 ArgType::InputFile | ArgType::OutputFile => {
                     // check where the file resolves to
-                    match self.filemap.find_match_str(&arg.0, &self.pwd) {
+                    match self.filemap.find_match_str(Path::new(&arg.0)) {
                         // TODO: add in support for *multiple mounts* and the file being from a
                         Some(fileinfo) => {
                             let datastream = stream::DataStream::strip_prefix(
                                 stream::StreamType::RemoteFile,
                                 &arg.0,
-                                &fileinfo.0,
+                                &fileinfo.0.to_str().unwrap(),
                             )?;
                             op.add_arg(node::OpArg::Stream(datastream));
                         }

@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::io::{stderr, stdout};
 use std::mem::drop;
 use std::net::TcpStream;
+use std::path::Path;
 use std::slice::IterMut;
 use stream::{
     DashStream, HandleIdentifier, IOType, NetStream, OutputHandle, PipeStream, SharedPipeMap,
@@ -410,8 +411,8 @@ impl Rapper for WriteNode {
     }
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
-        resolve_file_streams(&mut self.stdin, parent_dir)?;
-        resolve_file_streams(&mut self.output, parent_dir)?;
+        resolve_file_streams(&mut self.stdin, &Path::new(parent_dir));
+        resolve_file_streams(&mut self.output, &Path::new(parent_dir));
         Ok(())
     }
 }

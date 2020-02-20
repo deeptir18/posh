@@ -2,7 +2,9 @@
 #![feature(never_type)]
 #[macro_use]
 extern crate serde;
+extern crate crossbeam;
 extern crate failure;
+extern crate nix;
 extern crate serde_derive;
 pub mod dag;
 pub mod graph;

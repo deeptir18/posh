@@ -5,7 +5,7 @@ use dash::dag::{node, stream};
 use dash::util::Result;
 use failure::bail;
 use shellwords::split;
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Splits command into different stdin, stdout.
 /// Creates node::Program where args are just string args.
@@ -140,20 +140,17 @@ fn get_arg(
 ) -> Result<stream::DataStream> {
     match get_arg_following(args, pattern) {
         Ok(s) => match s {
-            Some(a) => {
-                let pwd = PathBuf::new();
-                match filemap.find_match_str(&a, &pwd) {
-                    Some(fileinfo) => {
-                        let stream = stream::DataStream::strip_prefix(
-                            stream::StreamType::RemoteFile,
-                            &a,
-                            &fileinfo.0,
-                        )?;
-                        Ok(stream)
-                    }
-                    None => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
+            Some(a) => match filemap.find_match_str(Path::new(&a)) {
+                Some(fileinfo) => {
+                    let stream = stream::DataStream::strip_prefix(
+                        stream::StreamType::RemoteFile,
+                        &a,
+                        &fileinfo.0.to_str().unwrap(),
+                    )?;
+                    Ok(stream)
                 }
-            }
+                None => Ok(stream::DataStream::new(stream::StreamType::LocalFile, &a)),
+            },
             None => Ok(default_val),
         },
         Err(e) => bail!(

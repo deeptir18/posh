@@ -1,12 +1,11 @@
+use super::filestream::FileStream;
 use super::program::{NodeId, ProgId};
 use super::{Location, Result, SharedMap};
 use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::convert::Into;
-use std::fs::{canonicalize, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::path::{Path, PathBuf};
 use std::process::{ChildStderr, ChildStdin, ChildStdout};
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
@@ -17,6 +16,8 @@ pub struct PipeStream {
     right: NodeId,
     /// Stdout or stderr of the left node?
     output_type: IOType,
+    /// Buffer intermediate output?
+    buffer_into_file: bool,
 }
 
 impl PipeStream {
@@ -29,6 +30,7 @@ impl PipeStream {
             left: left,
             right: right,
             output_type: output_type,
+            buffer_into_file: false,
         })
     }
 
@@ -59,6 +61,14 @@ impl PipeStream {
     pub fn get_output_type(&self) -> IOType {
         self.output_type
     }
+
+    pub fn set_bufferable(&mut self) {
+        self.buffer_into_file = true;
+    }
+
+    pub fn get_bufferable(&self) -> bool {
+        self.buffer_into_file
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
@@ -73,6 +83,8 @@ pub struct NetStream {
     left_location: Location,
     /// Location of right side of connection
     right_location: Location,
+    /// Should we buffer into a file
+    buffer_into_file: bool,
 }
 
 impl Default for NetStream {
@@ -83,6 +95,7 @@ impl Default for NetStream {
             output_type: IOType::Stdout,
             left_location: Location::Client,
             right_location: Location::Client,
+            buffer_into_file: false,
         }
     }
 }
@@ -105,6 +118,7 @@ impl NetStream {
             output_type: output_type,
             left_location: left_location,
             right_location: right_location,
+            buffer_into_file: false,
         })
     }
 
@@ -175,180 +189,13 @@ impl NetStream {
         }
         return None;
     }
-}
 
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Copy)]
-pub enum FileMode {
-    /// Create the file and write to it.
-    CREATE,
-    /// Just read permissions.
-    READ,
-    /// Append to an existing file.
-    APPEND,
-    /// Regular (unclear what to do so just putting a placeholder here).
-    REGULAR,
-}
-
-impl Default for FileMode {
-    fn default() -> Self {
-        FileMode::REGULAR
-    }
-}
-
-#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Default)]
-pub struct FileStream {
-    /// Where does the file live?
-    location: Location,
-    /// Name of the file
-    name: String,
-    /// file mode
-    mode: FileMode,
-}
-
-impl FileStream {
-    pub fn new(name: &str, location: Location) -> Self {
-        FileStream {
-            location: location,
-            name: name.to_string(),
-            mode: Default::default(),
-        }
+    pub fn get_bufferable(&self) -> bool {
+        self.buffer_into_file
     }
 
-    pub fn open_with_append(&self) -> Result<File> {
-        let mut open_options = OpenOptions::new();
-        open_options.write(true).append(true);
-        let file = open_options.open(self.name.clone())?;
-        Ok(file)
-    }
-
-    pub fn open(&self) -> Result<File> {
-        let mut open_options = OpenOptions::new();
-        match self.mode {
-            FileMode::CREATE => open_options.write(true).create(true).read(true),
-            FileMode::READ => open_options.read(true),
-            FileMode::APPEND => open_options.write(true).append(true).read(true),
-            FileMode::REGULAR => open_options.read(true).write(true).create(true),
-        };
-        let file = open_options.open(self.name.clone())?;
-        Ok(file)
-    }
-
-    pub fn new_exact(name: String, location: Location, mode: FileMode) -> Self {
-        FileStream {
-            location: location,
-            name: name,
-            mode: mode,
-        }
-    }
-
-    pub fn set_name(&mut self, name: &str) {
-        self.name = name.to_string();
-    }
-
-    /// Attempts to cannonicalize a filepath.
-    /// If the file does not exist, need to prepend the current directory to this path and then try
-    /// again to cannonicalize.
-    /// TODO: If that STILL doesn't work you have to do some more work.
-    pub fn dash_cannonicalize(&mut self, pwd: &PathBuf) -> Result<()> {
-        let name_clone = self.name.clone();
-        let path = Path::new(&name_clone);
-
-        // Then try to cannonicalize the file:
-        match canonicalize(&name_clone) {
-            Ok(pathbuf) => {
-                // change name to be this full path name
-                match pathbuf.to_str() {
-                    Some(p) => self.name = p.to_string(),
-                    None => {
-                        bail!("Couldn't convert: {:?} to string", pathbuf);
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-
-        // prepend the pwd and then try to cannonicalize
-        // if there are "." or ".." in the relative paths this might not work
-        // Which is no good especially for the git case right?
-        // We can explicitly address this as a concern in the implementation.
-
-        let new_relative_path = pwd.clone().as_path().join(path);
-        match new_relative_path.to_path_buf().to_str() {
-            Some(p) => self.name = p.to_string(),
-            None => {
-                bail!("Couldn't convert: {:?} to string", new_relative_path);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn set_mode(&mut self, mode: FileMode) {
-        self.mode = mode;
-    }
-
-    pub fn get_dot_label(&self) -> String {
-        format!(
-            " (file: {}\nloc: {:?}\nmode: {:?})",
-            self.name, self.location, self.mode
-        )
-    }
-
-    pub fn get_mode(&self) -> FileMode {
-        self.mode
-    }
-
-    pub fn new_from_prefix(location: Location, full_path: &str, mount: &str) -> Result<Self> {
-        let mut path = Path::new(full_path);
-        path = path.strip_prefix(mount)?;
-        let loc = match path.to_str() {
-            Some(p) => p,
-            None => bail!("Failed to strip prefix {} from {}", mount, full_path),
-        };
-        Ok(FileStream {
-            location: location,
-            name: loc.to_string(),
-            mode: Default::default(),
-        })
-    }
-
-    pub fn strip_prefix(&mut self, prefix: &str) -> Result<()> {
-        let mut path = Path::new(&self.name);
-        path = path.strip_prefix(prefix)?;
-        let loc = match path.to_str() {
-            Some(p) => p,
-            None => bail!("Failed to strip prefix {} from {}", prefix, self.name),
-        };
-        self.name = loc.to_string();
-        Ok(())
-    }
-
-    /// Returns the filename with the specified directory prepended.
-    /// Note: if provided directory is "", just does nothing.
-    pub fn prepend_directory(&mut self, directory: &str) -> Result<()> {
-        if directory == "" {
-            return Ok(());
-        }
-        match Path::new(directory)
-            .join(self.name.clone())
-            .as_path()
-            .to_str()
-        {
-            Some(s) => self.name = s.to_string(),
-            None => bail!("Could not prepend directory {} to {}", directory, self.name),
-        }
-        Ok(())
-    }
-
-    pub fn get_name(&self) -> String {
-        self.name.clone()
-    }
-
-    pub fn get_location(&self) -> Location {
-        self.location.clone()
-    }
-
-    pub fn set_location(&mut self, loc: Location) {
-        self.location = loc;
+    pub fn set_bufferable(&mut self) {
+        self.buffer_into_file = true;
     }
 }
 

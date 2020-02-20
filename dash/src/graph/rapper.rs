@@ -447,17 +447,16 @@ pub fn stream_initiate_filter(s: DashStream, node_id: NodeId, is_server: bool) -
 }
 
 /// Resolves a file stream to point to the correct path on the given server
-pub fn resolve_file_streams(streams: &mut Vec<DashStream>, parent_dir: &str) -> Result<()> {
+pub fn resolve_file_streams(streams: &mut Vec<DashStream>, parent_dir: &Path) {
     for s in streams.iter_mut() {
         match s {
             DashStream::File(filestream) => {
                 // Mutates the underlying filestream object.
-                filestream.prepend_directory(parent_dir)?;
+                filestream.prepend_directory(parent_dir);
             }
             _ => {}
         }
     }
-    Ok(())
 }
 /// Defines the set of functionality necessary to execute a node on any machine.
 /// All types of nodes implement this trait.

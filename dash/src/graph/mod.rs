@@ -1,11 +1,17 @@
 use super::util::Result;
 pub mod cmd;
+pub mod command;
+pub mod execute;
+pub mod filestream;
+pub mod info;
+pub mod pipe;
 pub mod program;
 pub mod rapper;
 pub mod read;
+pub mod read2;
 pub mod stream;
 pub mod write;
-
+pub mod write2;
 use failure::bail;
 use std::collections::HashMap;
 use std::fmt::Debug;

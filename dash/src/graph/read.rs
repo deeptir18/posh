@@ -4,7 +4,7 @@ use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{Link, NodeId, ProgId};
-use std::fs::OpenOptions;
+use std::path::Path;
 use std::slice::IterMut;
 use stream::{
     DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
@@ -149,10 +149,7 @@ impl Rapper for ReadNode {
                         let mut tcpstream = network_connections.remove(&netstream)?;
                         match input_stream {
                             DashStream::File(filestream) => {
-                                let mut file_handle = OpenOptions::new()
-                                    .write(true)
-                                    .create(true)
-                                    .open(filestream.get_name())?;
+                                let mut file_handle = filestream.open()?;
                                 copy(&mut file_handle, &mut tcpstream)?;
                             }
                             _ => {
@@ -174,10 +171,7 @@ impl Rapper for ReadNode {
 
                         match input_stream {
                             DashStream::File(filestream) => {
-                                let mut file_handle = OpenOptions::new()
-                                    .write(true)
-                                    .create(true)
-                                    .open(filestream.get_name())?;
+                                let mut file_handle = filestream.open()?;
                                 copy(&mut file_handle, &mut input_handle)?;
                             }
                             _ => {
@@ -210,8 +204,8 @@ impl Rapper for ReadNode {
     }
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
-        resolve_file_streams(&mut self.input, parent_dir)?;
-        resolve_file_streams(&mut self.stdout, parent_dir)?;
+        resolve_file_streams(&mut self.input, &Path::new(parent_dir));
+        resolve_file_streams(&mut self.stdout, &Path::new(parent_dir));
         Ok(())
     }
 
