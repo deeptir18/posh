@@ -1,5 +1,11 @@
+use super::command as cmd;
+use super::execute::Execute;
+use super::info::Info;
+use super::pipe::SharedChannelMap;
 use super::rapper::Rapper;
-use super::{cmd, read, stream, write, Location, Result};
+use super::read2 as read;
+use super::write2 as write;
+use super::{stream, Location, Result};
 use failure::bail;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map;
@@ -7,6 +13,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::fs::File;
+use std::path::Path;
 use std::path::PathBuf;
 use std::slice;
 use std::thread;
@@ -30,6 +37,51 @@ impl Into<Option<cmd::CommandNode>> for Elem {
         match self {
             Elem::Cmd(cmd) => Some(cmd),
             _ => None,
+        }
+    }
+}
+
+impl Execute for Elem {
+    /// Spawns the node to do the necessary work.
+    fn spawn(
+        &mut self,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+        channels: SharedChannelMap,
+        tmp_folder: PathBuf,
+    ) -> Result<()> {
+        match self {
+            Elem::Write(write_node) => {
+                write_node.spawn(pipes, network_connections, channels, tmp_folder)
+            }
+            Elem::Cmd(command_node) => {
+                command_node.spawn(pipes, network_connections, channels, tmp_folder)
+            }
+            Elem::Read(read_node) => {
+                read_node.spawn(pipes, network_connections, channels, tmp_folder)
+            }
+        }
+    }
+
+    /// Redirects input and output of node to the correct places based on where the stdin, stdout
+    /// and stderr go to.
+    fn redirect(
+        &mut self,
+        pipes: SharedPipeMap,
+        network_connections: SharedStreamMap,
+        channels: SharedChannelMap,
+        tmp_folder: PathBuf,
+    ) -> Result<()> {
+        match self {
+            Elem::Write(write_node) => {
+                write_node.redirect(pipes, network_connections, channels, tmp_folder)
+            }
+            Elem::Cmd(command_node) => {
+                command_node.redirect(pipes, network_connections, channels, tmp_folder)
+            }
+            Elem::Read(read_node) => {
+                read_node.redirect(pipes, network_connections, channels, tmp_folder)
+            }
         }
     }
 }
@@ -129,17 +181,37 @@ impl Rapper for Elem {
 
     fn get_stdout(&self) -> Vec<DashStream> {
         match self {
-            Elem::Write(write_node) => write_node.get_stdout(),
-            Elem::Read(read_node) => read_node.get_stdout(),
-            Elem::Cmd(cmd_node) => cmd_node.get_stdout(),
+            Elem::Write(write_node) => match write_node.get_stdout() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
+            Elem::Read(read_node) => match read_node.get_stdout() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
+
+            Elem::Cmd(cmd_node) => match cmd_node.get_stdout() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
         }
     }
 
     fn get_stderr(&self) -> Vec<DashStream> {
         match self {
-            Elem::Write(write_node) => write_node.get_stderr(),
-            Elem::Read(read_node) => read_node.get_stderr(),
-            Elem::Cmd(cmd_node) => cmd_node.get_stderr(),
+            Elem::Write(write_node) => match write_node.get_stderr() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
+            Elem::Read(read_node) => match read_node.get_stderr() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
+
+            Elem::Cmd(cmd_node) => match cmd_node.get_stderr() {
+                Some(stream) => vec![stream],
+                None => vec![],
+            },
         }
     }
 
@@ -153,30 +225,26 @@ impl Rapper for Elem {
 
     fn add_stdout(&mut self, stream: DashStream) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.add_stdout(stream),
-            Elem::Read(read_node) => read_node.add_stdout(stream),
-            Elem::Cmd(cmd_node) => cmd_node.add_stdout(stream),
+            Elem::Write(write_node) => write_node.set_stdout(stream),
+            Elem::Read(read_node) => read_node.set_stdout(stream),
+            Elem::Cmd(cmd_node) => cmd_node.set_stdout(stream),
         }
     }
 
     fn add_stderr(&mut self, stream: DashStream) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.add_stderr(stream),
-            Elem::Read(read_node) => read_node.add_stderr(stream),
-            Elem::Cmd(cmd_node) => cmd_node.add_stderr(stream),
+            Elem::Write(write_node) => write_node.set_stderr(stream),
+            Elem::Read(read_node) => read_node.set_stderr(stream),
+            Elem::Cmd(cmd_node) => cmd_node.set_stderr(stream),
         }
     }
 
     fn execute(
         &mut self,
-        pipes: SharedPipeMap,
-        network_connections: SharedStreamMap,
+        _pipes: SharedPipeMap,
+        _network_connections: SharedStreamMap,
     ) -> Result<()> {
-        match self {
-            Elem::Write(write_node) => write_node.execute(pipes, network_connections),
-            Elem::Read(read_node) => read_node.execute(pipes, network_connections),
-            Elem::Cmd(cmd_node) => cmd_node.execute(pipes, network_connections),
-        }
+        unimplemented!()
     }
 
     fn get_outward_streams(&self, iotype: stream::IOType, is_server: bool) -> Vec<NetStream> {
@@ -209,22 +277,14 @@ impl Rapper for Elem {
         network_connections: SharedStreamMap,
         tmp_folder: String,
     ) -> Result<()> {
-        match self {
-            Elem::Write(write_node) => {
-                write_node.run_redirection(pipes, network_connections, tmp_folder)
-            }
-            Elem::Read(read_node) => {
-                read_node.run_redirection(pipes, network_connections, tmp_folder)
-            }
-            Elem::Cmd(cmd_node) => cmd_node.run_redirection(pipes, network_connections, tmp_folder),
-        }
+        unimplemented!()
     }
 
     fn resolve_args(&mut self, parent_dir: &str) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.resolve_args(parent_dir),
-            Elem::Read(read_node) => read_node.resolve_args(parent_dir),
-            Elem::Cmd(cmd_node) => cmd_node.resolve_args(parent_dir),
+            Elem::Write(write_node) => write_node.resolve_args(Path::new(parent_dir).to_path_buf()),
+            Elem::Read(read_node) => read_node.resolve_args(Path::new(parent_dir).to_path_buf()),
+            Elem::Cmd(cmd_node) => cmd_node.resolve_args(Path::new(parent_dir).to_path_buf()),
         }
     }
 }
@@ -349,18 +409,22 @@ impl Node {
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
-        tmp_folder: String,
+        channels: SharedChannelMap,
+        tmp_folder: PathBuf,
     ) -> Result<()> {
         self.elem
-            .run_redirection(pipes, network_connections, tmp_folder)
+            .redirect(pipes, network_connections, channels, tmp_folder)
     }
 
     pub fn execute(
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
+        channels: SharedChannelMap,
+        tmp_folder: PathBuf,
     ) -> Result<()> {
-        self.elem.execute(pipes, network_connections)
+        self.elem
+            .spawn(pipes, network_connections, channels, tmp_folder)
     }
 
     pub fn get_loc(&self) -> Location {
@@ -980,39 +1044,37 @@ impl Program {
             // modify pipes
             let left_elem = program.get_mut_node(*left).unwrap().get_mut_elem();
             match left_elem {
-                Elem::Read(ref mut readnode) => {
-                    for stream in readnode.get_stdout_iter_mut() {
-                        match stream {
-                            DashStream::Pipe(ref mut pipestream) => {
-                                pipestream.set_left(*left);
-                                pipestream.set_right(*right);
-                            }
-                            _ => {}
-                        }
+                Elem::Read(ref mut readnode) => match readnode.get_stdout_mut() {
+                    DashStream::Pipe(ref mut pipestream) => {
+                        pipestream.set_left(*left);
+                        pipestream.set_right(*right);
                     }
-                }
+                    _ => {}
+                },
                 Elem::Write(ref mut _writenode) => {
                     // NOOP (no pipes coming out of writenodes)
                 }
                 Elem::Cmd(ref mut cmdnode) => {
-                    for stream in cmdnode.get_stdout_iter_mut() {
-                        match stream {
+                    match cmdnode.get_stdout_mut() {
+                        Some(ref mut dashstream) => match dashstream {
                             DashStream::Pipe(ref mut pipestream) => {
                                 pipestream.set_left(*left);
                                 pipestream.set_right(*right);
                             }
                             _ => {}
-                        }
+                        },
+                        None => {}
                     }
 
-                    for stream in cmdnode.get_stderr_iter_mut() {
-                        match stream {
+                    match cmdnode.get_stderr_mut() {
+                        Some(ref mut dashstream) => match dashstream {
                             DashStream::Pipe(ref mut pipestream) => {
                                 pipestream.set_left(*left);
                                 pipestream.set_right(*right);
                             }
                             _ => {}
-                        }
+                        },
+                        None => {}
                     }
                 }
             }
@@ -1416,6 +1478,7 @@ impl Program {
     /// need to be resolved.
     pub fn execute(&mut self, stream_map: SharedStreamMap, tmp_folder: String) -> Result<()> {
         let pipe_map = SharedPipeMap::new();
+        let channel_map = SharedChannelMap::new();
         let execution_order = self.execution_order();
         let mut node_threads: Vec<JoinHandle<Result<()>>> = Vec::new();
         let mut node_thread_ids: Vec<NodeId> = Vec::new();
@@ -1441,8 +1504,9 @@ impl Program {
             let pipe_map_copy = pipe_map.clone();
             let stream_map_copy = stream_map.clone();
             let mut node_clone = node.clone();
+            let tmp = Path::new(&tmp_folder).to_path_buf();
             // This call is non-blocking
-            node_clone.execute(pipe_map_copy, stream_map_copy)?;
+            node_clone.execute(pipe_map_copy, stream_map_copy, channel_map.clone(), tmp)?;
             debug!("finished spawning: {:?}", node);
         }
 
@@ -1457,12 +1521,13 @@ impl Program {
             };
             let pipe_map_copy = pipe_map.clone();
             let stream_map_copy = stream_map.clone();
+            let channels_clone = channel_map.clone();
             let mut node_clone = node.clone();
-            let tmp = tmp_folder.clone();
+            let tmp = Path::new(&tmp_folder).to_path_buf();
             // This call is non-blocking
             debug!("about to run redirection for: {:?},", node_id);
             node_threads.push(spawn(move || {
-                node_clone.run_redirection(pipe_map_copy, stream_map_copy, tmp.to_string())
+                node_clone.run_redirection(pipe_map_copy, stream_map_copy, channels_clone, tmp)
             }));
             node_thread_ids.push(*node_id);
         }

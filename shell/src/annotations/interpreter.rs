@@ -10,11 +10,13 @@ use super::special_commands::parse_export_command;
 use cmd::{CommandNode, NodeArg};
 use dash::dag::{node, stream};
 use dash::graph;
-use dash::graph::{cmd, program, rapper, Location};
+use dash::graph::command as cmd;
+use dash::graph::{info, program, rapper, Location};
 use dash::util::Result;
 use failure::bail;
 use graph::filestream::FileStream;
 use graph::stream::DashStream;
+use info::Info;
 use program::{Elem, Node, NodeId, Program};
 use rapper::Rapper;
 use std::collections::{HashMap, HashSet};
@@ -218,25 +220,17 @@ impl Interpreter {
                 }
                 Elem::Write(ref mut write_node) => {
                     // iterate through output streams
-                    for dashstream in write_node.get_stdout_iter_mut() {
-                        match dashstream {
-                            DashStream::File(ref mut fs) => {
-                                self.filemap.resolve_filestream(fs, &self.pwd)?;
-                            }
-                            _ => {}
+                    match write_node.get_stdout_mut() {
+                        DashStream::File(ref mut fs) => {
+                            self.filemap.resolve_filestream(fs, &self.pwd)?;
                         }
+                        _ => {}
                     }
                 }
                 Elem::Read(ref mut read_node) => {
                     // iterate through input streams
-                    for dashstream in read_node.get_stdin_iter_mut() {
-                        match dashstream {
-                            DashStream::File(ref mut fs) => {
-                                self.filemap.resolve_filestream(fs, &self.pwd)?;
-                            }
-                            _ => {}
-                        }
-                    }
+                    self.filemap
+                        .resolve_filestream(read_node.get_stdin_mut(), &mut self.pwd)?;
                 }
             }
         }
@@ -300,8 +294,6 @@ impl Interpreter {
                         let args = command_node.get_string_args();
                         // creates a vec of parsed commands
                         let (typed_args, options, splittable_count) = parser.parse_command(args)?;
-                        // store the splittable count
-                        command_node.set_splittable_arg(splittable_count);
                         // save the parsing options in the node itself, for later use
                         let mut new_options = command_node.get_options();
                         if options.splittable_across_input {
@@ -608,8 +600,6 @@ impl Interpreter {
     /// read/write nodes must run on the machine where the input/output file stream is located.
     /// command nodes must run where any FileStream arguments are located.
     /// Otherwise, preserve locality: e.g. try to run where the last command ran.
-    /// TODO: maybe we can add semantics about input > output? (to help with the decision).
-    /// SOMEWHERE, NEED TO MODIFY THE NECESSARY PIPES TO BE TCP STREAMS!
     pub fn assign_program_location(&mut self, prog: &mut Program) -> Result<()> {
         // iterate through nodes and assign any mandatory locations
         let mandatory_location = |locs: Vec<Location>| -> Option<Location> {
@@ -630,8 +620,8 @@ impl Interpreter {
         for (id, node) in prog.get_mut_nodes_iter() {
             match node.get_mut_elem() {
                 Elem::Read(ref mut readnode) => {
-                    let locations = readnode.get_input_locations();
-                    match mandatory_location(locations) {
+                    let location = readnode.get_input_location()?;
+                    match mandatory_location(vec![location]) {
                         Some(loc) => {
                             readnode.set_loc(loc);
                             assigned.insert(*id);
@@ -640,8 +630,8 @@ impl Interpreter {
                     }
                 }
                 Elem::Write(ref mut writenode) => {
-                    let locations = writenode.get_output_locations();
-                    match mandatory_location(locations) {
+                    let location = writenode.get_output_location()?;
+                    match mandatory_location(vec![location]) {
                         Some(loc) => {
                             writenode.set_loc(loc);
                             assigned.insert(*id);

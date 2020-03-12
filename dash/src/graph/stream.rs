@@ -1,4 +1,4 @@
-use super::filestream::FileStream;
+use super::filestream::{FifoStream, FileStream};
 use super::program::{NodeId, ProgId};
 use super::{Location, Result, SharedMap};
 use failure::bail;
@@ -202,6 +202,8 @@ impl NetStream {
 /// Kinds of inputs and outputs for node
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub enum DashStream {
+    /// Fifo on a certain machine
+    Fifo(FifoStream),
     /// File on a certain machine
     File(FileStream),
     /// Pipe between two local processes
@@ -226,6 +228,7 @@ impl DashStream {
             DashStream::File(fs) => Ok(fs.get_dot_label()),
             DashStream::Pipe(ps) => Ok(ps.get_dot_label()),
             DashStream::Tcp(ns) => Ok(ns.get_dot_label()),
+            DashStream::Fifo(fs) => Ok(fs.get_dot_label()),
             DashStream::Stdout => Ok("STDOUT".to_string()),
             DashStream::Stderr => Ok("STDERR".to_string()),
         }
@@ -235,6 +238,15 @@ impl Into<Option<FileStream>> for DashStream {
     fn into(self) -> Option<FileStream> {
         match self {
             DashStream::File(stream) => Some(stream),
+            _ => None,
+        }
+    }
+}
+
+impl Into<Option<FifoStream>> for DashStream {
+    fn into(self) -> Option<FifoStream> {
+        match self {
+            DashStream::Fifo(fifostream) => Some(fifostream),
             _ => None,
         }
     }

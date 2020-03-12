@@ -5,7 +5,7 @@ use super::pipe::SharedChannelMap;
 use super::rapper::copy_wrapper as copy;
 use super::{program, stream, Location, Result};
 use failure::bail;
-use program::{NodeId, ProgId};
+use program::{Link, NodeId, ProgId};
 use std::path::PathBuf;
 use stream::{
     DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
@@ -13,7 +13,7 @@ use stream::{
 use tracing::error;
 
 /// Node that reads from files and sends the output to the specified outputs.
-#[derive(Serialize, Deserialize, PartialEq, Debug, Default)]
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Default)]
 pub struct ReadNode {
     /// Id within the program.
     node_id: NodeId,
@@ -30,6 +30,10 @@ pub struct ReadNode {
 impl ReadNode {
     pub fn get_stdout_mut(&mut self) -> &mut DashStream {
         &mut self.stdout
+    }
+
+    pub fn get_stdin_mut(&mut self) -> &mut FileStream {
+        &mut self.input
     }
 
     pub fn get_input_location(&self) -> Result<Location> {
@@ -62,6 +66,14 @@ impl Info for ReadNode {
         Some(self.stdout.clone())
     }
 
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        match &self.stdout {
+            DashStream::Pipe(ps) => Some(ps.get_right()),
+            DashStream::Tcp(ns) => Some(ns.get_right()),
+            _ => None,
+        }
+    }
+
     fn get_stderr(&self) -> Option<DashStream> {
         unimplemented!()
     }
@@ -78,25 +90,33 @@ impl Info for ReadNode {
         0
     }
 
-    fn add_stdin(&mut self, stream: DashStream) {
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
         match stream {
             DashStream::File(fs) => {
                 self.input = fs;
+                Ok(())
             }
-            _ => {
-                panic!(
-                    "Setting stdin on filestream to be a non-file stream: {:?}",
-                    stream
-                );
-            }
+            _ => bail!(
+                "Setting stdin on filestream to be a non-file stream: {:?}",
+                stream
+            ),
         }
     }
 
-    fn set_stdout(&mut self, stream: DashStream) {
+    fn set_stdout(&mut self, stream: DashStream) -> Result<()> {
+        match stream {
+            DashStream::Pipe(_) => {}
+            DashStream::Tcp(_) => {}
+            _ => bail!(
+                "Cannot have stream of type {:?} as output for read node",
+                stream
+            ),
+        }
         self.stdout = stream;
+        Ok(())
     }
 
-    fn set_stderr(&mut self, _stream: DashStream) {
+    fn set_stderr(&mut self, _stream: DashStream) -> Result<()> {
         unimplemented!()
     }
 
@@ -111,6 +131,47 @@ impl Info for ReadNode {
         // resolve the location of the input filestream
         self.input.prepend_directory(parent_dir.as_path());
         Ok(())
+    }
+
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        assert!(new_edges.len() == 1);
+        if self.node_id != edge.get_left() {
+            bail!("Calling replace stream edges on read node where edge left is NOT node id, id: {:?}, edge: {:?}", self.node_id, edge);
+        } else {
+            let mut stream_to_add: Option<DashStream> = None;
+            match &self.stdout {
+                DashStream::Pipe(pipestream) => {
+                    if pipestream.get_right() == edge.get_right() {
+                        for new_edge in new_edges.iter() {
+                            let mut new_pipestream = pipestream.clone();
+                            new_pipestream.set_right(new_edge.get_right());
+                            stream_to_add = Some(DashStream::Pipe(new_pipestream));
+                        }
+                    }
+                }
+                DashStream::Tcp(netstream) => {
+                    if netstream.get_right() == edge.get_right() {
+                        for new_edge in new_edges.iter() {
+                            let mut new_netstream = netstream.clone();
+                            new_netstream.set_right(new_edge.get_right());
+                            stream_to_add = Some(DashStream::Tcp(new_netstream));
+                        }
+                    }
+                }
+                _ => {
+                    unreachable!();
+                }
+            }
+            match stream_to_add {
+                Some(ds) => {
+                    self.stdout = ds;
+                    Ok(())
+                }
+                None => {
+                    bail!("Couldn't find stream for edge {:?} to replace", edge);
+                }
+            }
+        }
     }
 
     /// Modify the pipe to be a netstream.
@@ -137,6 +198,12 @@ impl Info for ReadNode {
                 }
             },
             _ => Ok(()),
+        }
+    }
+    fn get_outward_streams(&self, _iotype: IOType, _is_server: bool) -> Vec<NetStream> {
+        match &self.stdout {
+            DashStream::Tcp(netstream) => vec![netstream.clone()],
+            _ => vec![],
         }
     }
 }

@@ -2,7 +2,7 @@ use super::pipe::SharedChannelMap;
 use super::stream::{SharedPipeMap, SharedStreamMap};
 use super::Result;
 use std::path::PathBuf;
-/// Functions to enable executing nodes on any machi[MaBne.
+/// Functions to enable executing nodes on any machine.
 pub trait Execute {
     /// Spawns the node to do the necessary work.
     fn spawn(

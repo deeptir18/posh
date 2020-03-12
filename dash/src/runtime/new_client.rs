@@ -205,6 +205,7 @@ fn run_stream_setup(
             // TODO:edo we need to convert the stream_identifier in anyway?
             let netstream_info: rpc::NetworkStreamInfo = rpc::NetworkStreamInfo {
                 loc: Location::Client,
+                port: port.clone(),
                 prog_id: prog_id,
                 netstream: netstream.clone(),
             };
@@ -236,6 +237,7 @@ fn run_stream_setup(
             let mut stream = TcpStream::connect(addr)?;
             let info = rpc::NetworkStreamInfo {
                 loc: netstream.get_receiving_side().clone(),
+                port: port.clone(),
                 prog_id: prog_id,
                 netstream: netstream.clone(),
             };
@@ -250,7 +252,7 @@ fn run_stream_setup(
             match msg {
                 rpc::ClientReturnCode::Success => Ok(()),
                 rpc::ClientReturnCode::Failure => {
-                    bail!("Server returned failure to open new stream")
+                    bail!("Server returned failure to open new stream to another server")
                 }
             }
         }

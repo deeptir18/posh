@@ -41,6 +41,8 @@ pub struct StreamSetupMsg {
 pub struct NetworkStreamInfo {
     /// Who is initiating the connection
     pub loc: Location,
+    /// port for initiation
+    pub port: String,
     /// Program Id
     pub prog_id: program::ProgId,
     /// Stream object: type and unique name

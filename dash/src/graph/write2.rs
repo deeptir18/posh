@@ -4,7 +4,7 @@ use super::pipe::{get_channel_name, BufferedPipe, PipeMode, SharedChannelMap};
 use super::rapper::copy_wrapper as copy;
 use super::{program, stream, Location, Result};
 use failure::bail;
-use program::{NodeId, ProgId};
+use program::{Link, NodeId, ProgId};
 use std::mem::drop;
 use std::path::PathBuf;
 use std::slice::IterMut;
@@ -39,6 +39,7 @@ impl WriteNode {
     pub fn get_output_location(&self) -> Result<Location> {
         match &self.output {
             DashStream::File(fs) => Ok(fs.get_location()),
+            DashStream::Fifo(fs) => Ok(fs.get_location()),
             DashStream::Stdout => Ok(Location::Client),
             DashStream::Stderr => Ok(Location::Client),
             _ => {
@@ -80,6 +81,10 @@ impl Info for WriteNode {
         Some(self.output.clone())
     }
 
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        None
+    }
+
     fn get_stderr(&self) -> Option<DashStream> {
         unimplemented!();
     }
@@ -96,15 +101,37 @@ impl Info for WriteNode {
         unimplemented!()
     }
 
-    fn add_stdin(&mut self, stream: DashStream) {
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
+        match &stream {
+            DashStream::Pipe(_ps) => {}
+            DashStream::Tcp(_ns) => {}
+            _ => {
+                bail!(
+                    "Cannot have stream of type {:?} as input to write node {}",
+                    stream,
+                    self.node_id
+                );
+            }
+        }
         self.stdin.push(stream);
+        Ok(())
     }
 
-    fn set_stdout(&mut self, stream: DashStream) {
+    fn set_stdout(&mut self, stream: DashStream) -> Result<()> {
+        match stream {
+            DashStream::File(_) => {}
+            DashStream::Fifo(_) => {}
+            DashStream::Stdout => {}
+            DashStream::Stderr => {}
+            _ => {
+                bail!("Cannot have stream {:?} as output to write node {:?}");
+            }
+        }
         self.output = stream;
+        Ok(())
     }
 
-    fn set_stderr(&mut self, _stream: DashStream) {
+    fn set_stderr(&mut self, _stream: DashStream) -> Result<()> {
         unimplemented!()
     }
 
@@ -123,6 +150,47 @@ impl Info for WriteNode {
             }
             _ => {}
         }
+        Ok(())
+    }
+
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        if self.node_id != edge.get_right() {
+            bail!("Calling replace stream edges on write node where edge right is NOT node id, id: {:?}, edge: {:?}", self.node_id, edge);
+        } else {
+            let mut streams_to_remove: Vec<DashStream> = Vec::new();
+            let mut streams_to_add: Vec<DashStream> = Vec::new();
+            for stream in self.stdin.iter() {
+                match stream {
+                    DashStream::Pipe(pipestream) => {
+                        if pipestream.get_right() == edge.get_right() {
+                            streams_to_remove.push(DashStream::Pipe(pipestream.clone()));
+                            for new_edge in new_edges.iter() {
+                                let mut new_pipestream = pipestream.clone();
+                                new_pipestream.set_left(new_edge.get_left());
+                                streams_to_add.push(DashStream::Pipe(new_pipestream));
+                            }
+                        }
+                    }
+                    DashStream::Tcp(netstream) => {
+                        if netstream.get_right() == edge.get_right() {
+                            streams_to_remove.push(DashStream::Tcp(netstream.clone()));
+                            for new_edge in new_edges.iter() {
+                                let mut new_netstream = netstream.clone();
+                                new_netstream.set_left(new_edge.get_left());
+                                streams_to_add.push(DashStream::Tcp(new_netstream));
+                            }
+                        }
+                    }
+                    _ => {
+                        unreachable!();
+                    }
+                }
+            }
+            assert!(streams_to_remove.len() == 1);
+            self.stdin.retain(|x| !streams_to_remove.contains(x));
+            self.stdin.append(&mut streams_to_add);
+        }
+
         Ok(())
     }
 
@@ -167,6 +235,10 @@ impl Info for WriteNode {
             }
         }
     }
+
+    fn get_outward_streams(&self, _iotype: IOType, _is_server: bool) -> Vec<NetStream> {
+        vec![]
+    }
 }
 
 impl Execute for WriteNode {
@@ -198,6 +270,10 @@ impl Execute for WriteNode {
                 let f = filestream.open()?;
                 drop(f);
             }
+            DashStream::Fifo(fifostream) => {
+                let f = fifostream.open()?;
+                drop(f);
+            }
             _ => {}
         }
         // open the file for appending
@@ -208,6 +284,10 @@ impl Execute for WriteNode {
                     match &self.output {
                         DashStream::File(filestream) => {
                             let mut f = filestream.open_with_append()?;
+                            copy(&mut tcpstream, &mut f)?;
+                        }
+                        DashStream::Fifo(fifostream) => {
+                            let mut f = fifostream.open()?;
                             copy(&mut tcpstream, &mut f)?;
                         }
                         DashStream::Stdout => {
@@ -256,11 +336,11 @@ impl Execute for WriteNode {
                                 }
                                 _ => {
                                     error!(
-                                        "Cannot have stream of type {:?} as output of write node",
+                                        "Cannot have stream of type {:?} as output of write node for a pipestream",
                                         self.output
                                     );
                                     bail!(
-                                        "Cannot have stream of type {:?} as output of write node",
+                                        "Cannot have stream of type {:?} as output of write node for a pipestream",
                                         self.output
                                     );
                                 }
@@ -285,11 +365,11 @@ impl Execute for WriteNode {
                                 }
                                 _ => {
                                     error!(
-                                        "Cannot have stream of type {:?} as output of write node",
+                                        "Cannot have stream of type {:?} as output of write node for a pipestream",
                                         self.output
                                     );
                                     bail!(
-                                        "Cannot have stream of type {:?} as output of write node",
+                                        "Cannot have stream of type {:?} as output of write node for a pipestream",
                                         self.output
                                     );
                                 }

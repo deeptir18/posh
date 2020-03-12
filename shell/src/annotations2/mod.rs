@@ -10,13 +10,11 @@ macro_rules! named_complete {
         }
     )
 }
+/// Parsing and building annotations.
 pub mod annotation_parser;
-pub mod examples;
-pub mod fileinfo;
+/// Object to store annotated commands.
+pub mod argument_matcher;
+/// Builds parser for command line syntax.
+pub mod cmd_parser;
+/// Defines command line syntax.
 pub mod grammar;
-pub mod interpreter;
-pub mod parser;
-pub mod scheduler;
-pub mod shell_interpreter;
-pub mod shell_parse;
-pub mod special_commands;

@@ -1,10 +1,79 @@
 use super::Location;
 use super::Result;
 use failure::bail;
+use nix::sys::stat;
+use nix::unistd;
 use serde::{Deserialize, Serialize};
 use std::fs::{canonicalize, File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+
+/// Fifo file that streams data from a TCP connection.
+/// Used to stream file arguments from one machine onto another.
+/// Only write nodes can write to FifoStreams.
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Default)]
+pub struct FifoStream {
+    /// Path where file is being streamed to.
+    path: PathBuf,
+    /// Location of fifo, where command is running.
+    dest_location: Location,
+    /// am I writing or reading from this FIFO?
+    mode: FifoMode,
+}
+
+impl FifoStream {
+    pub fn new(path: &Path, destination: Location, mode: FifoMode) -> Self {
+        FifoStream {
+            path: path.to_path_buf(),
+            dest_location: destination,
+            mode: mode,
+        }
+    }
+
+    /// Creates the fifo with the correct permissions.
+    pub fn create(&self) -> Result<()> {
+        let mut mode = stat::Mode::S_IRUSR;
+        mode.insert(stat::Mode::S_IWUSR);
+        match unistd::mkfifo(self.path.as_path(), mode) {
+            Ok(_) => Ok(()),
+            Err(e) => bail!("Failed to create buffer fifo path {:?}: {:?}", self.path, e),
+        }
+    }
+
+    /// Opens the fifo with the correct mode.
+    pub fn open(&self) -> Result<File> {
+        let mut open_options = OpenOptions::new();
+        match self.mode {
+            FifoMode::READ => {
+                open_options.read(true);
+            }
+            FifoMode::WRITE => {
+                open_options.write(true);
+            }
+        }
+        let handle = open_options.open(self.path.as_path())?;
+        Ok(handle)
+    }
+
+    pub fn get_dot_label(&self) -> String {
+        format!(
+            " (fifo: {:?}\ndest loc: {:?}\nmode {:?})",
+            self.path, self.dest_location, self.mode
+        )
+    }
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Copy)]
+pub enum FifoMode {
+    READ,
+    WRITE,
+}
+
+impl Default for FifoMode {
+    fn default() -> Self {
+        FifoMode::READ
+    }
+}
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq, Copy)]
 pub enum FileMode {

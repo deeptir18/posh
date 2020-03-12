@@ -6,6 +6,7 @@ use super::pipe::{
     SharedChannelMap,
 };
 use super::rapper::copy_wrapper as copy;
+use super::rapper::stream_initiate_filter;
 use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
@@ -344,6 +345,17 @@ impl Info for CommandNode {
         self.stdout.clone()
     }
 
+    fn get_stdout_id(&self) -> Option<NodeId> {
+        match &self.stdout {
+            Some(dashstream) => match dashstream {
+                DashStream::Pipe(ps) => Some(ps.get_left()),
+                DashStream::Tcp(ts) => Some(ts.get_left()),
+                _ => None,
+            },
+            None => None,
+        }
+    }
+
     fn get_stderr(&self) -> Option<DashStream> {
         self.stderr.clone()
     }
@@ -366,11 +378,32 @@ impl Info for CommandNode {
         }
     }
 
-    fn add_stdin(&mut self, stream: DashStream) {
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
+        match stream {
+            DashStream::Pipe(_) => {}
+            DashStream::Tcp(_) => {}
+            _ => {
+                bail!(
+                    "Cannot have stream of type {:?} as input to command node",
+                    stream
+                );
+            }
+        }
         self.stdin.push(stream);
+        Ok(())
     }
 
-    fn set_stdout(&mut self, stream: DashStream) {
+    fn set_stdout(&mut self, stream: DashStream) -> Result<()> {
+        match stream {
+            DashStream::Pipe(_) => {}
+            DashStream::Tcp(_) => {}
+            _ => {
+                bail!(
+                    "Cannot have stream of type {:?} as stdout to command node",
+                    stream
+                );
+            }
+        }
         if let Some(current) = &self.stdout {
             debug!(
                 "Setting stdout on {:?} as {:?}, but stdout is already set to: {:?}",
@@ -378,9 +411,20 @@ impl Info for CommandNode {
             );
         }
         self.stdout = Some(stream);
+        Ok(())
     }
 
-    fn set_stderr(&mut self, stream: DashStream) {
+    fn set_stderr(&mut self, stream: DashStream) -> Result<()> {
+        match stream {
+            DashStream::Pipe(_) => {}
+            DashStream::Tcp(_) => {}
+            _ => {
+                bail!(
+                    "Cannot have stream of type {:?} as stderr to command node",
+                    stream
+                );
+            }
+        }
         if let Some(current) = &self.stderr {
             debug!(
                 "Setting stderr on {:?} as {:?}, but stderr is already set to: {:?}",
@@ -388,6 +432,7 @@ impl Info for CommandNode {
             );
         }
         self.stderr = Some(stream);
+        Ok(())
     }
 
     fn get_dot_label(&self) -> Result<String> {
@@ -429,6 +474,117 @@ impl Info for CommandNode {
         Ok(())
     }
 
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()> {
+        // find all pipestreams with this edge as left and right
+        // if this node is not in the left or right, don't do any searching
+        if self.node_id != edge.get_left() && self.node_id != edge.get_right() {
+            bail!("Calling replace stream edges where cmd node is neither left or right of edge to replace, id: {:?}, old_edge: {:?}", self.node_id, edge);
+        } else {
+            // outward edge, replace stdout and stderr pipes
+            let mut streams_to_remove: Vec<DashStream> = Vec::new();
+            let mut streams_to_add: Vec<(IOType, DashStream)> = Vec::new();
+            // if edge to be replaced is an outward edge
+            if self.get_id() == edge.get_left() {
+                let mut streams: Vec<DashStream> = Vec::new();
+                match &self.stdout {
+                    Some(stdout) => streams.push(stdout.clone()),
+                    None => {}
+                }
+                match &self.stderr {
+                    Some(stderr) => streams.push(stderr.clone()),
+                    None => {}
+                }
+                for stream in streams.iter() {
+                    match stream {
+                        DashStream::Pipe(pipestream) => {
+                            if pipestream.get_left() == edge.get_left()
+                                && pipestream.get_right() == edge.get_right()
+                            {
+                                streams_to_remove.push(DashStream::Pipe(pipestream.clone()));
+                                for edge in new_edges.iter() {
+                                    let mut new_pipestream = pipestream.clone();
+                                    new_pipestream.set_right(edge.get_right());
+                                    streams_to_add.push((
+                                        new_pipestream.get_output_type(),
+                                        DashStream::Pipe(new_pipestream),
+                                    ));
+                                }
+                            }
+                        }
+                        DashStream::Tcp(tcpstream) => {
+                            if tcpstream.get_left() == edge.get_left()
+                                && tcpstream.get_right() == edge.get_right()
+                            {
+                                streams_to_remove.push(DashStream::Tcp(tcpstream.clone()));
+                                for edge in new_edges.iter() {
+                                    let mut new_tcpstream = tcpstream.clone();
+                                    new_tcpstream.set_right(edge.get_right());
+                                    streams_to_add.push((
+                                        new_tcpstream.get_output_type(),
+                                        DashStream::Tcp(new_tcpstream),
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                let streams = self.stdin.clone();
+                for stream in streams.iter() {
+                    match stream {
+                        DashStream::Pipe(pipestream) => {
+                            if pipestream.get_right() == edge.get_right()
+                                && pipestream.get_left() == edge.get_left()
+                            {
+                                streams_to_remove.push(DashStream::Pipe(pipestream.clone()));
+                                for edge in new_edges.iter() {
+                                    let mut new_pipestream = pipestream.clone();
+                                    new_pipestream.set_left(edge.get_left());
+                                    streams_to_add
+                                        .push((IOType::Stdin, DashStream::Pipe(new_pipestream)));
+                                }
+                            }
+                        }
+                        DashStream::Tcp(tcpstream) => {
+                            if tcpstream.get_right() == edge.get_right()
+                                && tcpstream.get_left() == edge.get_left()
+                            {
+                                streams_to_remove.push(DashStream::Tcp(tcpstream.clone()));
+                                for edge in new_edges.iter() {
+                                    let mut new_tcpstream = tcpstream.clone();
+                                    new_tcpstream.set_left(edge.get_left());
+                                    streams_to_add
+                                        .push((IOType::Stdin, DashStream::Tcp(new_tcpstream)));
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // add and remove the streams
+            if self.get_id() == edge.get_left() {
+                for (iotype, stream) in streams_to_add.iter() {
+                    match iotype {
+                        IOType::Stdout => {
+                            self.stdout = Some(stream.clone());
+                        }
+                        IOType::Stderr => {
+                            self.stderr = Some(stream.clone());
+                        }
+                        _ => {}
+                    }
+                }
+            } else {
+                self.stdin.retain(|x| !streams_to_remove.contains(&x));
+                for (_, stream) in streams_to_add.iter() {
+                    self.stdin.push(stream.clone());
+                }
+            }
+        }
+        Ok(())
+    }
     /// Modify the pipe to be a netstream.
     fn replace_pipe_with_net(
         &mut self,
@@ -461,6 +617,44 @@ impl Info for CommandNode {
             }
         }
         Ok(())
+    }
+
+    fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
+        let streams: Vec<DashStream> = match iotype {
+            IOType::Stdin => self
+                .stdin
+                .iter()
+                .filter(|&s| stream_initiate_filter(s.clone(), self.node_id, is_server))
+                .cloned()
+                .collect(),
+            IOType::Stdout => match &self.stdout {
+                Some(stream) => {
+                    if stream_initiate_filter(stream.clone(), self.node_id, is_server) {
+                        vec![stream.clone()]
+                    } else {
+                        vec![]
+                    }
+                }
+                None => vec![],
+            },
+            IOType::Stderr => match &self.stderr {
+                Some(stream) => {
+                    if stream_initiate_filter(stream.clone(), self.node_id, is_server) {
+                        vec![stream.clone()]
+                    } else {
+                        vec![]
+                    }
+                }
+                None => vec![],
+            },
+        };
+        streams
+            .iter()
+            .map(|s| {
+                let netstream_result: Option<NetStream> = s.clone().into();
+                netstream_result.unwrap()
+            })
+            .collect()
     }
 }
 

@@ -1,4 +1,4 @@
-use super::graph::{program, stream};
+use super::graph::{program, stream, Location};
 use super::runtime_util::{new_server, Addr, Server};
 use super::serialize::{read_msg_and_type, rpc, write_msg_and_type};
 use super::Result;
@@ -96,11 +96,13 @@ impl Server for ServerRuntime {
                     let server_name = self.server_name();
                     let debug = self.debug.clone();
                     let tmp = self.tmp.clone();
+                    let addr = self.addr.clone();
                     thread::spawn(move || {
                         match handle_spawned_client(
                             s,
                             folder_result,
                             stream_map,
+                            addr,
                             debug.clone(),
                             tmp,
                         ) {
@@ -138,6 +140,7 @@ fn handle_spawned_client(
     mut stream: TcpStream,
     folder_result: Result<String>,
     mut stream_map: SharedStreamMap,
+    addr: Addr,
     _debug: bool,
     tmp_folder: String,
 ) -> Result<()> {
@@ -153,7 +156,7 @@ fn handle_spawned_client(
     match msg_type {
         // handle setting up the stream to another machine
         rpc::MessageType::SetupStreams => {
-            let mut _msg: rpc::NetworkStreamInfo = match deserialize(&buf[..]) {
+            let msg: rpc::NetworkStreamInfo = match deserialize(&buf[..]) {
                 Ok(info) => info,
                 Err(e) => {
                     let response = serialize(&rpc::ClientReturnCode::Failure)?;
@@ -161,12 +164,50 @@ fn handle_spawned_client(
                     bail!("Error deserializing setup stream msg: {:?}", e);
                 }
             };
+            let connection_addr = match msg.netstream.get_receiving_side() {
+                Location::Server(ip) => Addr::new(&ip, &msg.port).get_addr(),
+                Location::Client => {
+                    bail!("Server {:?} cannot initiate connection to the client", addr);
+                }
+            };
 
-            // TODO: send an ack to another server to open up this pipe
-            // Send the client an ACK that it made all the pipe requests
-            let ack = serialize(&rpc::ClientReturnCode::Success)?;
-            write_msg_and_type(ack.to_vec(), rpc::MessageType::Control, &mut stream)?;
-            Ok(())
+            // start a connection to another server
+            let mut connection = TcpStream::connect(connection_addr)?;
+            // send a pipe message to another server to setup a stream
+            let netstream_info: rpc::NetworkStreamInfo = rpc::NetworkStreamInfo {
+                loc: Location::Server(addr.get_ip()),
+                port: msg.port.clone(),
+                prog_id: msg.prog_id,
+                netstream: msg.netstream.clone(),
+            };
+            let outermsg = serialize(&netstream_info)?;
+            write_msg_and_type(outermsg.to_vec(), rpc::MessageType::Pipe, &mut connection)?;
+
+            // wait for success:
+            let (_, response_buf) = read_msg_and_type(&mut connection)?;
+            let response: rpc::ClientReturnCode = deserialize(&response_buf[..])?;
+            match response {
+                rpc::ClientReturnCode::Success => {
+                    // Send the client an ACK that it made all the pipe requests
+                    let ack = serialize(&rpc::ClientReturnCode::Success)?;
+                    write_msg_and_type(ack.to_vec(), rpc::MessageType::Control, &mut stream)?;
+
+                    // save the connection in the shared map
+                    connection.set_nonblocking(true)?;
+                    stream_map.insert(msg.netstream, connection)?;
+                    Ok(())
+                }
+                rpc::ClientReturnCode::Failure => {
+                    // Send the client a message saying that it failed
+                    let nack = serialize(&rpc::ClientReturnCode::Failure)?;
+                    write_msg_and_type(nack.to_vec(), rpc::MessageType::Control, &mut stream)?;
+                    bail!(
+                        "Failed to setup stream to another server: {:?} on server {:?}",
+                        netstream_info,
+                        addr
+                    );
+                }
+            }
             // Just setup any TCP streams
         }
         rpc::MessageType::ProgramExecution => {
@@ -206,7 +247,7 @@ fn handle_spawned_client(
                 }
             };
 
-            // insert this stream into the client's map
+            // insert this stream into the shared map
             debug!("received stream: {:?}", stream_info);
             let stream_clone = stream.try_clone()?;
             stream_map.insert(stream_info.netstream, stream_clone)?;

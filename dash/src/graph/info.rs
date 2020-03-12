@@ -1,4 +1,4 @@
-use super::program::NodeId;
+use super::program::{Link, NodeId};
 use super::stream::{DashStream, IOType, NetStream, PipeStream};
 use super::{Location, Result};
 use std::path::{Path, PathBuf};
@@ -18,6 +18,8 @@ pub trait Info {
 
     fn get_stdout(&self) -> Option<DashStream>;
 
+    fn get_stdout_id(&self) -> Option<NodeId>;
+
     fn get_stderr(&self) -> Option<DashStream>;
 
     fn get_stdin_len(&self) -> usize;
@@ -26,11 +28,11 @@ pub trait Info {
 
     fn get_stderr_len(&self) -> usize;
 
-    fn add_stdin(&mut self, stream: DashStream);
+    fn add_stdin(&mut self, stream: DashStream) -> Result<()>;
 
-    fn set_stdout(&mut self, stream: DashStream);
+    fn set_stdout(&mut self, stream: DashStream) -> Result<()>;
 
-    fn set_stderr(&mut self, stream: DashStream);
+    fn set_stderr(&mut self, stream: DashStream) -> Result<()>;
 
     fn get_dot_label(&self) -> Result<String>;
 
@@ -43,6 +45,10 @@ pub trait Info {
         net: NetStream,
         iotype: IOType,
     ) -> Result<()>;
+
+    fn replace_stream_edges(&mut self, edge: Link, new_edges: Vec<Link>) -> Result<()>;
+
+    fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream>;
 }
 
 pub fn resolve_file_streams(streams: &mut Vec<DashStream>, parent_dir: &Path) {
