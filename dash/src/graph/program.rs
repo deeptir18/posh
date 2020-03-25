@@ -5,8 +5,9 @@ use super::pipe::SharedChannelMap;
 use super::rapper::Rapper;
 use super::read2 as read;
 use super::write2 as write;
-use super::{stream, Location, Result};
+use super::{filestream, stream, Location, Result};
 use failure::bail;
+use filestream::{FifoMode, FifoStream, FileStream};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map;
 use std::collections::HashMap;
@@ -273,9 +274,9 @@ impl Rapper for Elem {
 
     fn run_redirection(
         &mut self,
-        pipes: SharedPipeMap,
-        network_connections: SharedStreamMap,
-        tmp_folder: String,
+        _pipes: SharedPipeMap,
+        _network_connections: SharedStreamMap,
+        _tmp_folder: String,
     ) -> Result<()> {
         unimplemented!()
     }
@@ -911,9 +912,14 @@ impl Program {
         Ok(())
     }
 
+    pub fn replace_node(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<()> {
+        let _ = self.replace_node_parallel(id, nodes)?;
+        Ok(())
+    }
+
     /// For parallelization, replaces nodes with other nodes
     /// Also need to replace the corresponding pipestreams or netstreams
-    pub fn replace_node(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<()> {
+    pub fn replace_node_parallel(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<Vec<NodeId>> {
         // need to remove this node and replace any to and from edges
         if !self.nodes.contains_key(&id) {
             bail!("Id not in map");
@@ -936,7 +942,7 @@ impl Program {
                 Elem::Write(_) => {}
                 Elem::Read(_) => {}
             }
-            return Ok(());
+            return Ok(vec![]);
         }
 
         let mut new_ids: Vec<NodeId> = Vec::new();
@@ -1004,7 +1010,7 @@ impl Program {
         }
         self.remove_node(id)?;
 
-        Ok(())
+        Ok(new_ids)
     }
 
     /// Creates a new program from different subgraphs.
@@ -1184,6 +1190,50 @@ impl Program {
                     self.add_unique_edge(link.get_left(), *new_right);
                 }
             }
+        }
+
+        Ok(())
+    }
+
+    /// Inserts a remote read operation into the program.
+    pub fn add_remote_fifo_read(
+        &mut self,
+        origin_loc: &Location,
+        access_loc: &Location,
+        origin_filestream: &FileStream,
+        fifo_location: &FifoStream,
+    ) -> Result<()> {
+        // add in a read node and write node
+        let mut readnode = read::ReadNode::default();
+        readnode.add_stdin(DashStream::File(origin_filestream.clone()))?;
+        let readnode_id = self.add_elem(Elem::Read(readnode));
+        let mut writenode = write::WriteNode::default();
+        let mut new_fifo = fifo_location.clone();
+        new_fifo.set_mode(FifoMode::WRITE);
+        writenode.set_stdout(DashStream::Fifo(fifo_location.clone()))?;
+        let writenode_id = self.add_elem(Elem::Write(writenode));
+
+        // add edge in between them
+        self.add_unique_edge(readnode_id, writenode_id);
+        let netstream = NetStream::new(
+            readnode_id,
+            writenode_id,
+            IOType::Stdout,
+            origin_loc.clone(),
+            access_loc.clone(),
+        )?;
+
+        // set the connection between two nodes
+        let read = self.nodes.get_mut(&readnode_id).unwrap();
+        {
+            let read_elem = read.get_mut_elem();
+            read_elem.add_stdout(DashStream::Tcp(netstream.clone()))?;
+        }
+
+        let write = self.nodes.get_mut(&writenode_id).unwrap();
+        {
+            let write_elem = write.get_mut_elem();
+            write_elem.add_stdin(DashStream::Tcp(netstream.clone()))?;
         }
 
         Ok(())

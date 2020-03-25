@@ -6,6 +6,7 @@ use dash::util::Result;
 use failure::bail;
 use nom::types::CompleteByteSlice;
 use nom::*;
+use std::str;
 named_complete!(
     parse_specific_size_amt<SizeInfo>,
     map!(

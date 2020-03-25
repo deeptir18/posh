@@ -1,9 +1,23 @@
 ///! Grammar Abstraction that defines the syntax of command line arguments.
 use super::annotation_parser::parse_annotation;
 use dash::util::Result;
+use failure::bail;
+use nom::types::CompleteByteSlice;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::*;
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum AccessType {
+    Sequential,
+    Random,
+}
+
+impl Default for AccessType {
+    fn default() -> Self {
+        AccessType::Sequential
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ArgType {
@@ -88,6 +102,20 @@ pub struct Param {
     pub attached_to_short: bool,
 }
 
+impl Param {
+    pub fn is_file_type(&self) -> bool {
+        if (self.param_type == ArgType::InputFile)
+            | (self.param_type == ArgType::InputFileList)
+            | (self.param_type == ArgType::OutputFile)
+            | (self.param_type == ArgType::OutputFileList)
+        {
+            return true;
+        } else {
+            return false;
+        }
+    }
+}
+
 /// All the possible things provided in the annotation.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Info {
@@ -118,6 +146,8 @@ pub struct ParsingOptions {
     pub reduces_input: bool,
     /// If the command implicitly relies on the current directory (e.g., many git commands)
     pub needs_current_dir: bool,
+    /// Does command read input sequentially
+    pub access_type: AccessType,
 }
 
 impl Default for ParsingOptions {
@@ -127,6 +157,7 @@ impl Default for ParsingOptions {
             splittable_across_input: false,
             reduces_input: false,
             needs_current_dir: false,
+            access_type: AccessType::default(),
         }
     }
 }
@@ -143,7 +174,7 @@ pub enum IndividualParseOption {
 }
 
 /// An annotation is a command name and a vector of args
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Default)]
 pub struct Command {
     /// Name of command to be parsed.
     pub command_name: String,

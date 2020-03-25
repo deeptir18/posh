@@ -1,17 +1,335 @@
 use super::{annotations2, config, scheduler, shellparser, Result};
-use annotations2::{argument_matcher, cmd_parser};
-use cmd_parser::Parser;
-use argument_matcher::ArgMatch;
-use scheduler::
-use config::network::{FileNetwork, ServerInfo, ServerKey};
+use annotations2::{argument_matcher, grammar, parser};
+use argument_matcher::{ArgMatch, RemoteAccessInfo};
+use config::filecache::FileCache;
+use config::network::FileNetwork;
+use dash::graph::filestream::{FifoMode, FifoStream, FileStream};
+use dash::graph::info::Info;
+use dash::graph::program::{Elem, NodeId, Program};
+use dash::graph::stream::DashStream;
+use dash::graph::Location;
 use failure::bail;
-use shellparser::shellparser::ShellSplit;
+use grammar::{AccessType, ArgType};
+use parser::Parser;
+use scheduler::Scheduler;
+use shellparser::shellparser::{parse_command, Command};
+use std::collections::HashMap;
+use std::env;
+use std::path::PathBuf;
 
-pub struct Interpreter<T> {
+pub struct Interpreter {
+    /// Where interpreter keeps track of filesystem and link information for scheduling.
     config: FileNetwork,
+    /// Cache for resolving relative paths to full paths
+    filecache: FileCache,
+    /// Parses command lines and matches with annotation information.
     parser: Parser,
-    scheduler: 
-
+    /// Scheduling object that implements the scheduling functionality.
+    scheduler: Box<dyn Scheduler>,
+    /// When parallelizing commands on a single machine, what is max way to split?
+    splitting_factor: u32,
+    /// Current working directory.
+    pwd: PathBuf,
+    /// Environment values.
+    env: HashMap<String, String>,
 }
 
-impl Interpreter {}
+impl Interpreter {
+    /// Constructs a new interpreter given a  file with config information and a file with
+    /// annotations.
+    pub fn new(
+        config_file: &str,
+        annotations_file: &str,
+        scheduler: Box<dyn Scheduler>,
+    ) -> Result<Self> {
+        let parser = Parser::new(annotations_file)?;
+        let config = FileNetwork::new(config_file)?;
+        Ok(Interpreter {
+            config: config,
+            filecache: FileCache::default(),
+            parser: parser,
+            scheduler: scheduler,
+            splitting_factor: 1,
+            pwd: Default::default(),
+            env: Default::default(),
+        })
+    }
+
+    pub fn construct(
+        config: FileNetwork,
+        parser: Parser,
+        scheduler: Box<dyn Scheduler>,
+        pwd: PathBuf,
+    ) -> Interpreter {
+        Interpreter {
+            config: config,
+            filecache: FileCache::default(),
+            parser: parser,
+            scheduler: scheduler,
+            splitting_factor: 1,
+            pwd: pwd,
+            env: Default::default(),
+        }
+    }
+    pub fn set_splitting_factor(&mut self, factor: u32) {
+        self.splitting_factor = factor;
+    }
+
+    pub fn set_pwd(&mut self, pwd: PathBuf) {
+        self.pwd = pwd;
+    }
+
+    /// Takes a command line and returns a program, ready for execution.
+    /// Handles parsing, scheduling, and implicit parallelization.
+    pub fn parse_command_line(&mut self, command: &str) -> Result<Option<Program>> {
+        // Shell parse pass
+        let prog = parse_command(command)?;
+        match prog {
+            Command::EXPORT(var, value) => {
+                // set an environment value
+                env::set_var(var.clone(), value.clone());
+                self.env.insert(var, value);
+                Ok(None)
+            }
+            Command::PROGRAM(mut program) => {
+                self.parse_program(&mut program)?;
+                Ok(Some(program))
+            }
+        }
+    }
+
+    /// Runs parsing pipeline, which parses, parallelizes, and schedules programs.
+    fn parse_program(&mut self, program: &mut Program) -> Result<()> {
+        // run parser to produce arg matches for command nodes
+        let mut match_map = self.run_parser(program)?;
+
+        // run parallelization to split any nodes into multiple nodes
+        self.parallelize_program(program, &mut match_map)?;
+
+        // run scheduler
+        let location_assignment = self.scheduler.schedule(program, &mut match_map)?;
+
+        self.assign_locations(program, &mut match_map, location_assignment)?;
+
+        Ok(())
+    }
+
+    /// Takes the program and corresponding argmatch structure and splits it across any
+    /// parallelizable arguments.
+    fn parallelize_program(
+        &mut self,
+        program: &mut Program,
+        match_map: &mut HashMap<NodeId, ArgMatch>,
+    ) -> Result<()> {
+        let mut replacement_map: Vec<(NodeId, (Vec<Elem>, Vec<ArgMatch>))> = Vec::new();
+        for (id, node) in program.get_mut_nodes_iter() {
+            if let Elem::Cmd(ref mut command_node) = node.get_mut_elem() {
+                let arg_match = match_map.get_mut(&id).unwrap();
+                command_node.clear_args();
+                let replacement_matches = arg_match.split(self.splitting_factor, &self.config)?;
+
+                if replacement_matches.len() > 0 {
+                    let replacement_nodes: Vec<Elem> = replacement_matches
+                        .iter()
+                        .map(|_| Elem::Cmd(command_node.clone()))
+                        .collect();
+                    replacement_map.push((*id, (replacement_nodes, replacement_matches)));
+                }
+            }
+        }
+        for (id, (elems, mut argmatches)) in replacement_map.into_iter() {
+            let new_ids = program.replace_node_parallel(id, elems)?;
+            assert!(new_ids.len() == argmatches.len());
+            let _ = match_map.remove(&id);
+            // add in each part of split argmatch to the overall match map
+            for new_id in new_ids.iter() {
+                let argmatch = argmatches.pop().unwrap();
+                match_map.insert(*new_id, argmatch);
+            }
+        }
+        Ok(())
+    }
+
+    /// Finds annotation matches (if any) and resolves Strings in each node of program.
+    fn run_parser(&mut self, program: &mut Program) -> Result<HashMap<NodeId, ArgMatch>> {
+        let mut match_map: HashMap<NodeId, ArgMatch> = HashMap::default();
+        // 1: produce annotation matches
+        for (id, node) in program.get_mut_nodes_iter() {
+            let elem = node.get_mut_elem();
+            if let Elem::Cmd(ref mut command_node) = elem {
+                if command_node.args_len() == 0 {
+                    continue;
+                } else {
+                    // get an argmatch for the invocation and attach it to the command node
+                    let arg_match = self.parser.match_invocation(
+                        command_node.get_name().as_str(),
+                        command_node.get_string_args(),
+                    )?;
+                    match_map.insert(*id, arg_match);
+                }
+            }
+        }
+
+        // Iterate through all nodes and:
+        //      (1) Resolve any environment variables
+        //      (2) Use glob to split any wildcard arguments for command nodes
+        //      (3) Resolve each filestream to a full path. For scheduling at a later step.
+        for (id, node) in program.get_mut_nodes_iter() {
+            match node.get_mut_elem() {
+                Elem::Read(ref mut read_node) => {
+                    let filestream = read_node.get_stdin_mut();
+                    filestream.resolve_env_var()?;
+                    self.filecache.resolve_path(filestream, &self.pwd)?;
+                }
+                Elem::Write(ref mut write_node) => match write_node.get_stdout_mut() {
+                    DashStream::File(ref mut filestream) => {
+                        filestream.resolve_env_var()?;
+                        self.filecache.resolve_path(filestream, &self.pwd)?;
+                    }
+                    _ => {}
+                },
+                Elem::Cmd(_) => {
+                    // resolve all environment variables in associated arg match object
+                    let arg_match = match_map.get_mut(&id).unwrap();
+                    arg_match.resolve_glob()?;
+                    arg_match.resolve_env_vars()?;
+                    arg_match.resolve_file_paths(&mut self.filecache, &self.pwd.as_path())?;
+                }
+            }
+        }
+        Ok(match_map)
+    }
+
+    /// Modify program to reflect the assignments.
+    /// Includes making any relevant pipes TCP connections,
+    /// and modifying filestream prefixes if necessary.
+    fn assign_locations(
+        &mut self,
+        prog: &mut Program,
+        matches: &mut HashMap<NodeId, ArgMatch>,
+        assignments: HashMap<NodeId, Location>,
+    ) -> Result<()> {
+        for (id, loc) in assignments {
+            match prog.get_mut_node(id) {
+                Some(ref mut node) => {
+                    node.set_loc(loc);
+                }
+                None => {
+                    bail!("Assignment map refers to node {:?} not in program", id);
+                }
+            }
+        }
+
+        // ensure each node can access files at given assigned location
+        let mut remote_access_map: HashMap<NodeId, Vec<RemoteAccessInfo>> = HashMap::new();
+        for (id, node) in prog.get_mut_nodes_iter() {
+            match node.get_loc() {
+                Location::Client => {}
+                Location::Server(_) => match node.get_mut_elem() {
+                    Elem::Cmd(_cmdnode) => {
+                        let argmatch = matches.get_mut(id).unwrap();
+                        // files to setup for remote access
+                        let remote_access = argmatch.strip_file_paths(
+                            Location::Client,
+                            node.get_loc(),
+                            &mut self.config,
+                        )?;
+                        remote_access_map.insert(*id, remote_access);
+                    }
+                    Elem::Write(ref mut writenode) => {
+                        let loc = writenode.get_loc();
+                        match writenode.get_stdout_mut() {
+                            DashStream::File(ref mut fs) => {
+                                self.config.strip_file_path(fs, &Location::Client, &loc)?;
+                            }
+                            _ => {}
+                        }
+                    }
+                    Elem::Read(ref mut readnode) => {
+                        let loc = readnode.get_loc();
+                        let mut input = readnode.get_stdin_mut();
+                        self.config
+                            .strip_file_path(&mut input, &Location::Client, &loc)?;
+                    }
+                },
+            }
+        }
+
+        for (id, remote_access_vec) in remote_access_map.iter() {
+            let mut argmatch = matches.get_mut(id).unwrap();
+            for remote_access_info in remote_access_vec.iter() {
+                self.setup_remote_access(prog, &mut argmatch, &mut remote_access_info.clone())?;
+            }
+        }
+
+        // ensures all necessary pipestreams are converted to tcpstreams
+        prog.make_pipes_networked()?;
+
+        // iterate through all cmdnodes and reconstruct final arguments
+        for (id, node) in prog.get_mut_nodes_iter() {
+            match node.get_mut_elem() {
+                Elem::Cmd(ref mut cmdnode) => {
+                    let argmatch = matches.get(id).unwrap();
+                    let arguments = argmatch.reconstruct()?;
+                    cmdnode.set_args(arguments);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Modifies the program to reflect that this filestream is read remotely.
+    pub fn setup_remote_access(
+        &self,
+        prog: &mut Program,
+        argmatch: &mut ArgMatch,
+        remote_access_info: &mut RemoteAccessInfo,
+    ) -> Result<()> {
+        // transfer output file to correct location after job is done
+        if remote_access_info.argtype == ArgType::OutputFile {
+            unimplemented!();
+        }
+        // transfer input file to correct location before job starts
+        if argmatch.get_access_type() != AccessType::Sequential {
+            unimplemented!();
+        }
+
+        // add in a remote fifo read
+        // need to ensure the left side's filestream is stripped to the filestream location
+        // and also create a temporary var name on the right side for the fifo
+        self.config.strip_file_path(
+            &mut remote_access_info.filestream,
+            &Location::Client,
+            &remote_access_info.origin_location,
+        )?;
+
+        // query for a temp file in the new location
+        let tmp_path = self.config.get_tmp(
+            &remote_access_info.filestream.get_path().as_path(),
+            &remote_access_info.access_location,
+        )?;
+
+        remote_access_info.set_tmp_name(FileStream::new(
+            tmp_path.as_path(),
+            remote_access_info.access_location.clone(),
+        ));
+
+        // ensure the argument gets changed
+        argmatch.change_arg(&remote_access_info)?;
+
+        // add into the the program
+        let fifostream = FifoStream::new(
+            tmp_path.as_path(),
+            remote_access_info.access_location.clone(),
+            FifoMode::READ,
+        );
+        prog.add_remote_fifo_read(
+            &remote_access_info.origin_location,
+            &remote_access_info.access_location,
+            &remote_access_info.filestream,
+            &fifostream,
+        )?;
+        Ok(())
+    }
+}

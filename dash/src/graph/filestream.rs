@@ -4,6 +4,7 @@ use failure::bail;
 use nix::sys::stat;
 use nix::unistd;
 use serde::{Deserialize, Serialize};
+use std::env;
 use std::fs::{canonicalize, File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -40,6 +41,10 @@ impl FifoStream {
         }
     }
 
+    pub fn set_mode(&mut self, mode: FifoMode) {
+        self.mode = mode;
+    }
+
     /// Opens the fifo with the correct mode.
     pub fn open(&self) -> Result<File> {
         let mut open_options = OpenOptions::new();
@@ -60,6 +65,10 @@ impl FifoStream {
             " (fifo: {:?}\ndest loc: {:?}\nmode {:?})",
             self.path, self.dest_location, self.mode
         )
+    }
+
+    pub fn get_location(&self) -> Location {
+        self.dest_location.clone()
     }
 }
 
@@ -153,6 +162,10 @@ impl FileStream {
         self.path.clone()
     }
 
+    pub fn is_absolute(&self) -> bool {
+        self.path.is_absolute()
+    }
+
     pub fn get_location(&self) -> Location {
         self.location.clone()
     }
@@ -181,10 +194,6 @@ impl FileStream {
         Ok(())
     }
 
-    pub fn is_absolute(&self) -> bool {
-        self.path.as_path().is_absolute()
-    }
-
     /// Tries to return a string representation of the filepath.
     pub fn get_name(&self) -> Result<String> {
         match self.path.to_path_buf().to_str() {
@@ -193,9 +202,9 @@ impl FileStream {
         }
     }
 
-    /// Attempts to cannonicalize the filepath.
+    /// Attempts to canonicalize the filepath.
     /// If the file does not exist, modifies the path to prefix the pwd.
-    pub fn dash_cannonicalize(&mut self, pwd: &PathBuf) -> Result<()> {
+    pub fn dash_canonicalize(&mut self, pwd: &Path) -> Result<()> {
         match canonicalize(self.path.as_path()) {
             Ok(full_path) => {
                 self.path = full_path;
@@ -207,8 +216,41 @@ impl FileStream {
             },
         }
 
-        let new_relative_path = pwd.clone().as_path().join(self.path.clone());
+        let new_relative_path = pwd.to_path_buf().join(self.path.clone());
         self.path = new_relative_path;
+        Ok(())
+    }
+
+    /// Attempts to resolve any environment variables within the filepath.
+    pub fn resolve_env_var(&mut self) -> Result<()> {
+        let mut new_path = PathBuf::new();
+        for part in self.path.iter() {
+            match part.to_os_string().into_string() {
+                Ok(component) => {
+                    if component.starts_with("$") {
+                        let var_name = component.to_string().split_at(1).1.to_string();
+                        match env::var(var_name.clone()) {
+                            Ok(val) => {
+                                new_path.push(Path::new(val.as_str()));
+                            }
+                            Err(e) => {
+                                bail!(
+                                    "Could not resolve environment variable for {:?} -> {:?}",
+                                    var_name,
+                                    e
+                                );
+                            }
+                        }
+                    } else {
+                        new_path.push(Path::new(&component));
+                    }
+                }
+                Err(osstring) => {
+                    new_path.push(Path::new(&osstring));
+                }
+            }
+        }
+        self.path = new_path;
         Ok(())
     }
 }

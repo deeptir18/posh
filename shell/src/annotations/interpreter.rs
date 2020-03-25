@@ -11,14 +11,13 @@ use cmd::{CommandNode, NodeArg};
 use dash::dag::{node, stream};
 use dash::graph;
 use dash::graph::command as cmd;
-use dash::graph::{info, program, rapper, Location};
+use dash::graph::{info, program, Location};
 use dash::util::Result;
 use failure::bail;
 use graph::filestream::FileStream;
 use graph::stream::DashStream;
 use info::Info;
 use program::{Elem, Node, NodeId, Program};
-use rapper::Rapper;
 use std::collections::{HashMap, HashSet};
 use std::convert::Into;
 use std::env;
@@ -293,7 +292,8 @@ impl Interpreter {
                         // use the parser to turn the String args into "types"
                         let args = command_node.get_string_args();
                         // creates a vec of parsed commands
-                        let (typed_args, options, splittable_count) = parser.parse_command(args)?;
+                        let (typed_args, options, _splittable_count) =
+                            parser.parse_command(args)?;
                         // save the parsing options in the node itself, for later use
                         let mut new_options = command_node.get_options();
                         if options.splittable_across_input {

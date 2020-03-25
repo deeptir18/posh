@@ -149,7 +149,7 @@ impl FileMap {
         }
         new_cache_entry.rel_path = old_path.to_path_buf();
         // first, canonicalize the path
-        match filestream.dash_cannonicalize(pwd) {
+        match filestream.dash_canonicalize(&pwd.as_path()) {
             Ok(_) => {}
             Err(e) => {
                 debug!("Could not cannonicalize path: {:?}", e);

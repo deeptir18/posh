@@ -16,7 +16,6 @@ pub mod fileinfo;
 pub mod grammar;
 pub mod interpreter;
 pub mod parser;
-pub mod scheduler;
 pub mod shell_interpreter;
 pub mod shell_parse;
 pub mod special_commands;

@@ -1,6 +1,7 @@
 extern crate dash;
 extern crate itertools;
 extern crate shellwords;
+use super::special_commands::parse_export_command;
 use cmd::{CommandNode, NodeArg};
 use dash::graph::command as cmd;
 use dash::graph::read2 as read;
@@ -24,10 +25,29 @@ use std::path::Path;
 use stream::{DashStream, IOType, PipeStream};
 use write::WriteNode;
 
-// TODO:
-//  two steps to add:
-//  (1) Resolve * patterns via running ls (helpful for *.INFO in RT command)
-//  (2) Add resolution of environment variables
+// General types
+pub enum Command {
+    /// just an export command.
+    EXPORT(String, String),
+    /// Program that needs to be parsed
+    PROGRAM(Program),
+}
+
+pub fn parse_command(command: &str) -> Result<Command> {
+    if command.starts_with("export") {
+        let (var, value) = parse_export_command(command)?;
+        Ok(Command::EXPORT(var, value))
+    } else {
+        // make a shell split from the command
+        let shellsplit = ShellSplit::new(command)?;
+        // turn shell split into shell graph
+        let shellgraph = shellsplit.convert_into_shell_graph()?;
+        // turn into program that interpreter can deal with
+        let program = shellgraph.convert_into_program()?;
+        Ok(Command::PROGRAM(program))
+    }
+}
+
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Hash, Eq)]
 pub struct SubCommand {
     pub elts: Vec<RawShellElement>,

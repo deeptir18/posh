@@ -21,4 +21,5 @@ exitcode = "1.1.2"
 glob = "0.3.0"
 tracing = " 0.1.12"
 tracing-subscriber = "0.1.6"
+yaml-rust = "0.4.3"
 # conch-parser = "0.1.0" -> test to see if this can do the same types of shell parsings
