@@ -8,7 +8,6 @@ use std::env;
 use std::fs::{canonicalize, File, OpenOptions};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-
 /// Fifo file that streams data from a TCP connection.
 /// Used to stream file arguments from one machine onto another.
 /// Only write nodes can write to FifoStreams.
@@ -190,7 +189,8 @@ impl FileStream {
     }
 
     pub fn strip_prefix(&mut self, prefix: &Path) -> Result<()> {
-        self.path.strip_prefix(prefix)?;
+        let new_path = self.path.strip_prefix(prefix)?;
+        self.path = new_path.to_path_buf();
         Ok(())
     }
 

@@ -12,5 +12,7 @@ macro_rules! named_complete {
 }
 /// Caches full paths to save calls to stat.
 pub mod filecache;
+/// How do we query for file sizes?
+pub mod filesize;
 /// Information about where certain files are located and speeds between various machines.
 pub mod network;

@@ -32,6 +32,10 @@ impl WriteNode {
         &mut self.output
     }
 
+    pub fn get_output_ref(&self) -> &DashStream {
+        &self.output
+    }
+
     pub fn get_stdin_iter_mut(&mut self) -> IterMut<DashStream> {
         self.stdin.iter_mut()
     }
@@ -86,7 +90,7 @@ impl Info for WriteNode {
     }
 
     fn get_stderr(&self) -> Option<DashStream> {
-        unimplemented!();
+        None
     }
 
     fn get_stdin_len(&self) -> usize {

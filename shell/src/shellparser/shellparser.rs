@@ -420,7 +420,8 @@ impl ShellGraph {
                     writenode.set_stdout(DashStream::Stdout)?;
                 }
                 IOType::Stderr => {
-                    writenode.set_stderr(DashStream::Stderr)?;
+                    // Note: write nodes 'output' is set with set_stdout
+                    writenode.set_stdout(DashStream::Stderr)?;
                 }
                 _ => bail!("We shouldn't be adding a link to stdout"),
             }

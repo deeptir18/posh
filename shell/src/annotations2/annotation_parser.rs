@@ -145,7 +145,7 @@ named_complete!(
 named_complete!(
     parse_short<Info>,
     map!(
-        do_parse!(tag!("short:") >> word: alpha1 >> (word)),
+        do_parse!(tag!("short:") >> word: alphanumeric1 >> (word)),
         |s: CompleteByteSlice| {
             let st = str::from_utf8(s.0).unwrap();
             Info::Short(String::from(st))

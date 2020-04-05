@@ -248,7 +248,14 @@ impl ArgMatch {
 
     /// Reconstructs the arguments into a string that can be used at runtime.
     pub fn reconstruct(&self) -> Result<Vec<NodeArg>> {
+        // TODO: handle subcommands in a more robust way
+
         let mut ret: Vec<NodeArg> = Vec::new();
+        if self.cmd_name.len() > 1 {
+            for cmpt in self.cmd_name[1..].iter() {
+                ret.push(NodeArg::Str(format!("{}", cmpt)));
+            }
+        }
         // iterate through the options first, then lone parameters last
         for (ind, args) in self.arg_list.iter().enumerate() {
             let arg_info = self.map.get(&ind).unwrap();
@@ -395,6 +402,15 @@ impl ArgMatch {
                                 }
                             }
                         }
+                        // need to add entry into location_map in for the last chunk
+                        match current_location {
+                            Some(curr) => {
+                                location_map.insert(chunks.len() - 1, curr);
+                            }
+                            None => {
+                                bail!("Current location still none, this means no args");
+                            }
+                        }
                         let mut new_chunks: Vec<Vec<NodeArg>> = Vec::new();
                         for chunk_ind in 0..chunks.len() {
                             let loc = location_map.get(&chunk_ind).unwrap();
@@ -415,6 +431,8 @@ impl ArgMatch {
                                     );
                                 }
                             } else {
+                                // when different mounts appear in different parts of the array in
+                                // different orders
                                 unimplemented!();
                             }
                         }
@@ -447,15 +465,22 @@ impl ArgMatch {
     }
 
     /// Returns vector of all the file related dependencies this node sees.
-    pub fn file_dependencies(&self) -> Vec<(ArgType, NodeArg)> {
-        let mut ret: Vec<(ArgType, NodeArg)> = Vec::new();
+    pub fn file_dependencies(&self) -> Vec<(ArgType, FileStream)> {
+        let mut ret: Vec<(ArgType, FileStream)> = Vec::new();
         for (i, args) in self.arg_list.iter().enumerate() {
             match self.map.get(&i).unwrap() {
                 Argument::LoneOption(_) => {}
                 Argument::OptWithParam(_, param) | Argument::LoneParam(param) => {
                     if param.is_file_type() {
                         for arg in args.iter() {
-                            ret.push((param.param_type, arg.clone()));
+                            match arg {
+                                NodeArg::Str(_) => {
+                                    unreachable!();
+                                }
+                                NodeArg::Stream(fs) => {
+                                    ret.push((param.param_type, fs.clone()));
+                                }
+                            }
                         }
                     }
                 }
@@ -557,6 +582,7 @@ impl ArgMatch {
 
     /// Iterates through file arguments and strips prefix in preparation for being sent to another
     /// machine.
+    /// Also changes location of filepath to reflect the access location
     pub fn strip_file_paths(
         &mut self,
         origin_location: Location,
@@ -576,6 +602,7 @@ impl ArgMatch {
                                     if file_location == location {
                                         // modify path
                                         config.strip_file_path(fs, &origin_location, &location)?;
+                                        fs.set_location(location.clone());
                                     } else {
                                         // need to modify argument for remote access
                                         if file_location == Location::Client

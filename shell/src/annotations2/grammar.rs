@@ -236,7 +236,7 @@ impl Command {
                 Ok(annotation) => Ok(annotation),
                 Err(e) => bail!("Failed parsing annotaton: {:?}", e),
             },
-            Err(e) => bail!("Failed parsing annotaton: {:?}", e),
+            Err(e) => bail!("Failed parsing annotaton for {:?}: {:?}", ann, e),
         }
     }
 

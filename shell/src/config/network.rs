@@ -55,6 +55,8 @@ pub struct FileNetwork {
     server_info: HashMap<ServerKey, ServerInfo>,
     /// Link speed information (topology information)
     links: HashMap<(Location, Location), u32>,
+    /// list of servers
+    locations: Vec<Location>,
 }
 
 #[derive(PartialEq, Debug, Clone, Hash, Eq, Default)]
@@ -135,10 +137,17 @@ impl FileNetwork {
             }
         }
 
+        let mut servers: Vec<Location> = path_to_addr
+            .iter()
+            .map(|(_mt, server)| Location::Server(server.ip.clone()))
+            .collect();
+        servers.push(Location::Client);
+
         Ok(FileNetwork {
             path_to_addr: path_to_addr,
             server_info: server_info,
             links: links,
+            locations: servers,
         })
     }
 
@@ -147,29 +156,46 @@ impl FileNetwork {
         links: HashMap<(Location, Location), u32>,
         server_info: HashMap<ServerKey, ServerInfo>,
     ) -> Self {
+        let mut servers: Vec<Location> = path_to_addr
+            .iter()
+            .map(|(_mt, server)| Location::Server(server.ip.clone()))
+            .collect();
+        servers.push(Location::Client);
         FileNetwork {
             path_to_addr: path_to_addr,
             server_info: server_info,
             links: links,
+            locations: servers,
         }
     }
 
+    pub fn get_location_list(&self) -> Vec<Location> {
+        self.locations.clone()
+    }
+
     /// Queries for speed of link from machine1 to machine2
-    pub fn network_speed(&self, machine1: Location, machine2: Location) -> Option<u32> {
-        match self.links.get(&(machine1, machine2)) {
-            Some(speed) => Some(*speed),
+    pub fn network_speed(&self, machine1: &Location, machine2: &Location) -> Option<f64> {
+        if machine1 == machine2 {
+            return Some(std::f64::INFINITY);
+        }
+        match self.links.get(&(machine1.clone(), machine2.clone())) {
+            Some(speed) => Some(*speed as f64),
             None => None,
         }
     }
 
-    /// Queries for where a certain file lives (origin filesystem).
-    pub fn get_location(&self, filestream: &FileStream) -> Location {
+    pub fn get_path_location(&self, path: PathBuf) -> Location {
         for (mount, serverkey) in self.path_to_addr.iter() {
-            if filestream.get_path().starts_with(mount.as_path()) {
+            if path.starts_with(mount.as_path()) {
                 return Location::Server(serverkey.ip.clone());
             }
         }
         return Location::Client;
+    }
+
+    /// Queries for where a certain file lives (origin filesystem).
+    pub fn get_location(&self, filestream: &FileStream) -> Location {
+        self.get_path_location(filestream.get_path())
     }
 
     /// Strips the filestream of the correct path when serialized.
@@ -195,7 +221,6 @@ impl FileNetwork {
                             }
                         }
                     }
-                    break;
                 }
                 bail!(
                     "No prefix found in {:?} for {:?}",
@@ -220,7 +245,6 @@ impl FileNetwork {
                                     }
                                 }
                             }
-                            break;
                         }
                         bail!(
                             "No prefix found in {:?} for {:?}",

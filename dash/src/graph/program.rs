@@ -23,7 +23,6 @@ use thread::{spawn, JoinHandle};
 pub type NodeId = u32;
 pub type ProgId = u32;
 use std::io::Write;
-use tracing::debug;
 
 /// Elements can be read, write, or command nodes
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
@@ -477,6 +476,12 @@ pub struct Link {
 }
 
 impl Link {
+    pub fn new(left: NodeId, right: NodeId) -> Self {
+        Link {
+            left: left,
+            right: right,
+        }
+    }
     pub fn get_left(&self) -> NodeId {
         self.left
     }
@@ -527,6 +532,14 @@ pub enum MergeDirection {
 }
 
 impl Program {
+    pub fn get_id(&self) -> ProgId {
+        self.id
+    }
+
+    pub fn set_id(&mut self, id: ProgId) {
+        self.id = id;
+    }
+
     pub fn write_dot(&self, filename: &str) -> Result<()> {
         let mut file = File::create(filename)?;
         file.write_all(b"digraph {\n")?;
@@ -661,10 +674,6 @@ impl Program {
         Ok(())
     }
 
-    pub fn get_id(&self) -> ProgId {
-        self.id
-    }
-
     pub fn get_node(&self, id: NodeId) -> Option<Node> {
         match self.nodes.get(&id) {
             None => None,
@@ -692,7 +701,7 @@ impl Program {
     }
 
     /// Splits a node across its input streams.
-    pub fn split_across_input(&mut self, id: NodeId) -> Result<()> {
+    pub fn split_across_input(&mut self, id: NodeId) -> Result<Vec<NodeId>> {
         // find the node
         let node = match self.get_node(id) {
             Some(n) => n,
@@ -704,7 +713,7 @@ impl Program {
         let stdin = node.get_stdin();
         // if there is nothing to parallelize across, don't do anything
         if stdin.len() <= 1 {
-            return Ok(());
+            return Ok(vec![]);
         } else {
         }
 
@@ -891,7 +900,7 @@ impl Program {
         // remove the original node
         self.remove_node(id)?;
 
-        Ok(())
+        Ok(new_node_ids)
     }
 
     pub fn remove_node(&mut self, id: NodeId) -> Result<()> {
@@ -913,20 +922,25 @@ impl Program {
     }
 
     pub fn replace_node(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<()> {
-        let _ = self.replace_node_parallel(id, nodes)?;
+        let _ = self.replace_node_parallel(id, nodes, true)?;
         Ok(())
     }
 
     /// For parallelization, replaces nodes with other nodes
     /// Also need to replace the corresponding pipestreams or netstreams
-    pub fn replace_node_parallel(&mut self, id: NodeId, nodes: Vec<Elem>) -> Result<Vec<NodeId>> {
+    pub fn replace_node_parallel(
+        &mut self,
+        id: NodeId,
+        nodes: Vec<Elem>,
+        replace_args: bool,
+    ) -> Result<Vec<NodeId>> {
         // need to remove this node and replace any to and from edges
         if !self.nodes.contains_key(&id) {
             bail!("Id not in map");
         }
 
         // if the new nodes to replace with have length 1 -> just the arguments need to change
-        if nodes.len() == 1 {
+        if nodes.len() == 1 && replace_args {
             let new_node = &nodes[0];
             let node = self.get_mut_node(id).unwrap();
             match node.get_mut_elem() {
@@ -1102,7 +1116,7 @@ impl Program {
                     for stream in cmdnode.get_stdin_iter_mut() {
                         match stream {
                             DashStream::Pipe(ref mut pipestream) => {
-                                debug!("modifying pipstream: {:?}", pipestream);
+                                tracing::debug!("modifying pipstream: {:?}", pipestream);
                                 pipestream.set_left(*left);
                                 pipestream.set_right(*right);
                             }
@@ -1467,8 +1481,12 @@ impl Program {
         self.source_nodes.push(first_node_id.unwrap());
     }
 
-    /// finds the dependent n
-    fn find_dependent_nodes(&self, node_id: NodeId) -> Vec<NodeId> {
+    pub fn get_sinks(&self) -> Vec<NodeId> {
+        self.sink_nodes.clone()
+    }
+
+    /// Finds nodes that are dependent on a certain node
+    pub fn get_dependent_nodes(&self, node_id: NodeId) -> Vec<NodeId> {
         self.edges
             .iter()
             .filter(|&link| link.get_right() == node_id)
@@ -1476,23 +1494,102 @@ impl Program {
             .collect()
     }
 
+    pub fn get_outgoing_nodes(&self, node_id: NodeId) -> Vec<NodeId> {
+        self.edges
+            .iter()
+            .filter(|&link| link.get_left() == node_id)
+            .map(|link| link.get_right())
+            .collect()
+    }
+
+    // finds outgoing edges from a node
+    pub fn get_outgoing_edges(&self, node_id: NodeId) -> Vec<(IOType, Link)> {
+        let mut ret: Vec<(IOType, Link)> = Vec::new();
+        let node = self.nodes.get(&node_id).unwrap();
+        match node.get_elem() {
+            Elem::Cmd(cmdnode) => {
+                if let Some(stdout) = cmdnode.get_stdout() {
+                    match stdout {
+                        DashStream::Pipe(ps) => {
+                            ret.push((IOType::Stdout, Link::new(ps.get_left(), ps.get_right())));
+                        }
+                        DashStream::Tcp(ns) => {
+                            ret.push((IOType::Stdout, Link::new(ns.get_left(), ns.get_right())));
+                        }
+                        _ => {
+                            unreachable!();
+                        }
+                    }
+                }
+                if let Some(stderr) = cmdnode.get_stderr() {
+                    match stderr {
+                        DashStream::Pipe(ps) => {
+                            ret.push((IOType::Stderr, Link::new(ps.get_left(), ps.get_right())));
+                        }
+                        DashStream::Tcp(ns) => {
+                            ret.push((IOType::Stderr, Link::new(ns.get_left(), ns.get_right())));
+                        }
+                        _ => {
+                            unreachable!();
+                        }
+                    }
+                }
+            }
+            Elem::Read(readnode) => {
+                if let Some(stdout) = readnode.get_stdout() {
+                    match stdout {
+                        DashStream::Pipe(ps) => {
+                            ret.push((IOType::Stdout, Link::new(ps.get_left(), ps.get_right())));
+                        }
+                        DashStream::Tcp(ns) => {
+                            ret.push((IOType::Stdout, Link::new(ns.get_left(), ns.get_right())));
+                        }
+                        _ => {
+                            // readnode can only have pipe or network pipe as output
+                            unreachable!();
+                        }
+                    }
+                }
+            }
+            Elem::Write(_writenode) => {
+                // write node should have no stdout
+            }
+        }
+        ret
+    }
+
+    pub fn get_dependent_edges(&self, node_id: NodeId) -> Vec<Link> {
+        self.edges
+            .iter()
+            .filter(|&link| link.get_right() == node_id)
+            .map(|link| (link.clone()))
+            .collect()
+    }
+
+    fn partial_ordering_helper(
+        &self,
+        id: NodeId,
+        visited: &mut HashMap<NodeId, bool>,
+        stack: &mut Vec<NodeId>,
+    ) {
+        visited.insert(id, true);
+        for outgoing in self.get_outgoing_nodes(id) {
+            if !(visited.get(&outgoing).unwrap()) {
+                self.partial_ordering_helper(outgoing, visited, stack);
+            }
+        }
+        stack.insert(0, id);
+    }
+
     /// Finds an execution order for the nodes
-    /// All dependencies for a sink need to be executed before a sink
-    /// So maybe traverse from the sinks backwards (insert into a list)
+    /// by doing a topological sort via DFS
     pub fn execution_order(&self) -> Vec<NodeId> {
         let mut path: Vec<NodeId> = Vec::new();
-        let mut stack: Vec<NodeId> = Vec::new();
-        for node_id in self.sink_nodes.iter() {
-            stack.push(*node_id);
-        }
-
-        while stack.len() > 0 {
-            let node = stack.pop().unwrap();
-            if !path.contains(&node) {
-                path.insert(0, node);
-                for dependence in self.find_dependent_nodes(node) {
-                    stack.push(dependence);
-                }
+        let nodes: Vec<NodeId> = self.nodes.keys().map(|k| *k).collect();
+        let mut visited: HashMap<NodeId, bool> = nodes.iter().map(|k| (*k, false)).collect();
+        for node_id in nodes.iter() {
+            if !(visited.get(node_id).unwrap()) {
+                self.partial_ordering_helper(*node_id, &mut visited, &mut path);
             }
         }
         path
@@ -1537,7 +1634,7 @@ impl Program {
         // theoretically should not break anything else, as stuff is being executed with full paths
         match self.get_current_dir() {
             Some(pathbuf) => {
-                debug!("Trying to set current dir on server: {:?}", pathbuf);
+                tracing::debug!("Trying to set current dir on server: {:?}", pathbuf);
                 env::set_current_dir(pathbuf.as_path())?;
             }
             None => {}
@@ -1557,7 +1654,7 @@ impl Program {
             let tmp = Path::new(&tmp_folder).to_path_buf();
             // This call is non-blocking
             node_clone.execute(pipe_map_copy, stream_map_copy, channel_map.clone(), tmp)?;
-            debug!("finished spawning: {:?}", node);
+            tracing::debug!("finished spawning: {:?}", node);
         }
 
         // Next, loop over and run redirection commands
@@ -1575,7 +1672,7 @@ impl Program {
             let mut node_clone = node.clone();
             let tmp = Path::new(&tmp_folder).to_path_buf();
             // This call is non-blocking
-            debug!("about to run redirection for: {:?},", node_id);
+            tracing::debug!("about to run redirection for: {:?},", node_id);
             node_threads.push(spawn(move || {
                 node_clone.run_redirection(pipe_map_copy, stream_map_copy, channels_clone, tmp)
             }));
@@ -1602,7 +1699,7 @@ impl Program {
             }
             count += 1;
         }
-        debug!("joined all the threads");
+        tracing::debug!("joined all the threads");
 
         Ok(())
     }

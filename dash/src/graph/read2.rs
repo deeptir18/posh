@@ -36,6 +36,10 @@ impl ReadNode {
         &mut self.input
     }
 
+    pub fn get_input_ref(&self) -> &FileStream {
+        &self.input
+    }
+
     pub fn get_input_location(&self) -> Result<Location> {
         Ok(self.input.get_location())
     }
@@ -75,7 +79,7 @@ impl Info for ReadNode {
     }
 
     fn get_stderr(&self) -> Option<DashStream> {
-        unimplemented!()
+        None
     }
 
     fn get_stdin_len(&self) -> usize {

@@ -11,6 +11,7 @@ use super::{program, stream, Location, Result};
 use failure::bail;
 use itertools::join;
 use program::{Link, NodeId, ProgId};
+use std::convert::Into;
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
 use std::slice::IterMut;
@@ -28,6 +29,15 @@ use which::which;
 pub enum NodeArg {
     Str(String),
     Stream(FileStream),
+}
+
+impl Into<Option<FileStream>> for NodeArg {
+    fn into(self) -> Option<FileStream> {
+        match self {
+            NodeArg::Stream(stream) => Some(stream),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone, Copy)]
@@ -348,8 +358,8 @@ impl Info for CommandNode {
     fn get_stdout_id(&self) -> Option<NodeId> {
         match &self.stdout {
             Some(dashstream) => match dashstream {
-                DashStream::Pipe(ps) => Some(ps.get_left()),
-                DashStream::Tcp(ts) => Some(ts.get_left()),
+                DashStream::Pipe(ps) => Some(ps.get_right()),
+                DashStream::Tcp(ts) => Some(ts.get_right()),
                 _ => None,
             },
             None => None,

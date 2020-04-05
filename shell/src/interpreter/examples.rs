@@ -2,15 +2,83 @@ use super::{annotations2, config, interpreter, scheduler};
 use annotations2::cmd_parser::CmdParser;
 use annotations2::grammar::Command;
 use annotations2::parser::Parser;
+use config::filesize::FileSize;
 use config::network::{FileNetwork, ServerInfo, ServerKey};
 use dash::graph::Location;
+use dash::util::Result;
 use interpreter::Interpreter;
-use scheduler::DPScheduler;
+use scheduler::dp::DPScheduler;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+struct TestFileSize;
+impl FileSize for TestFileSize {
+    fn is_dir(&self, path: &Path) -> bool {
+        if (path == Path::new("/b/a"))
+            | (path == Path::new("/c/b"))
+            | (path == Path::new("/d/c"))
+            | (path == Path::new("e/d"))
+            | (path == Path::new("/f/e"))
+            | (path.is_dir())
+        {
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    fn file_size(&self, path: &Path) -> Result<u64> {
+        let mounts: Vec<PathBuf> = vec![
+            Path::new("/b/a").to_path_buf(),
+            Path::new("/c/b").to_path_buf(),
+            Path::new("/d/c").to_path_buf(),
+            Path::new("/e/d").to_path_buf(),
+            Path::new("/f/e/").to_path_buf(),
+        ];
+        for (i, mount) in mounts.into_iter().enumerate() {
+            if path.starts_with(mount.as_path()) {
+                let ret = match i {
+                    0 => Ok(100),
+                    1 => Ok(1000),
+                    2 => Ok(10000),
+                    3 => Ok(100000),
+                    4 => Ok(1000000),
+                    _ => {
+                        continue;
+                    }
+                };
+                return ret;
+            }
+        }
+        Ok(100)
+    }
+
+    fn dir_size(&self, path: &Path) -> Result<u64> {
+        let mounts: Vec<PathBuf> = vec![
+            Path::new("/b/a").to_path_buf(),
+            Path::new("/c/b").to_path_buf(),
+            Path::new("/d/c").to_path_buf(),
+            Path::new("/e/d").to_path_buf(),
+            Path::new("/f/e/").to_path_buf(),
+        ];
+        match mounts.iter().position(|x| x == path) {
+            Some(i) => match i {
+                0 => Ok(100),
+                1 => Ok(1000),
+                2 => Ok(10000),
+                3 => Ok(100000),
+                4 => Ok(1000000),
+                _ => Ok(5000),
+            },
+
+            None => Ok(5000),
+        }
+    }
+}
+
 fn get_git_clone_parser() -> CmdParser {
     let mut parser = CmdParser::new("git clone");
-    let annotation = "git clone: PARAMS:[(type:str,size:1),(type:output_file,size:1)]";
+    let annotation =
+        "git clone[needs_current_dir]: PARAMS:[(type:str,size:1),(type:output_file,size:1)]";
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();
@@ -105,7 +173,7 @@ fn get_tr_parser() -> CmdParser {
 
 fn get_cut_parser() -> CmdParser {
     let mut parser = CmdParser::new("cut");
-    let annotation = "cut: OPTPARAMS:[(long:characters,short:c,size:1,type:str)]";
+    let annotation = "cut[reduces_input,splittable_across_input]: OPTPARAMS:[(long:characters,short:c,size:1,type:str)]";
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();
@@ -138,6 +206,14 @@ fn get_q_parser() -> CmdParser {
     parser
         .add_annotation(Command::new(annotation).unwrap())
         .unwrap();
+    parser
+}
+
+fn get_comm_parser() -> CmdParser {
+    let mut parser = CmdParser::new("comm");
+    let annotation = 
+        "comm[reduces_input]: FLAGS:[(short:i),(short:1),(short:2),(short:3)] PARAMS:[(type:input_file,size:1),(type:input_file,size:1)]";
+    parser.add_annotation(Command::new(annotation).unwrap()).unwrap();
     parser
 }
 
@@ -176,6 +252,7 @@ fn get_test_parser() -> Parser {
     parsers.insert("wc".to_string(), get_wc_parser());
     parsers.insert("git clone".to_string(), get_git_clone_parser());
     parsers.insert("git commit".to_string(), get_git_commit_parser());
+    parsers.insert("comm".to_string(), get_comm_parser());
     Parser::construct(parsers)
 }
 fn get_test_filemap() -> HashMap<PathBuf, ServerKey> {
@@ -229,7 +306,7 @@ fn get_test_links() -> HashMap<(Location, Location), u32> {
                 continue;
             }
             let first_location = ips[i].to_string();
-            let second_location = ips[i].to_string();
+            let second_location = ips[j].to_string();
             // 20 Mbps for wan links
             if first_location == "client" {
                 ret.insert((Location::Client, Location::Server(second_location)), 20);
@@ -274,10 +351,12 @@ fn get_test_network_config() -> FileNetwork {
 pub fn get_test_interpreter() -> Interpreter {
     // TODO: actually choose with scheduler to use
     let scheduler = Box::new(DPScheduler {});
+    let filesizemod = Box::new(TestFileSize {});
     Interpreter::construct(
         get_test_network_config(),
         get_test_parser(),
         scheduler,
         Path::new("/d/c/folder").to_path_buf(),
+        filesizemod,
     )
 }

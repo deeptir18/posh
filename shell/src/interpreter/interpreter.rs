@@ -2,6 +2,7 @@ use super::{annotations2, config, scheduler, shellparser, Result};
 use annotations2::{argument_matcher, grammar, parser};
 use argument_matcher::{ArgMatch, RemoteAccessInfo};
 use config::filecache::FileCache;
+use config::filesize::FileSize;
 use config::network::FileNetwork;
 use dash::graph::filestream::{FifoMode, FifoStream, FileStream};
 use dash::graph::info::Info;
@@ -16,6 +17,7 @@ use shellparser::shellparser::{parse_command, Command};
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
+use tracing::debug;
 
 pub struct Interpreter {
     /// Where interpreter keeps track of filesystem and link information for scheduling.
@@ -60,10 +62,11 @@ impl Interpreter {
         parser: Parser,
         scheduler: Box<dyn Scheduler>,
         pwd: PathBuf,
+        filesizemod: Box<dyn FileSize>,
     ) -> Interpreter {
         Interpreter {
             config: config,
-            filecache: FileCache::default(),
+            filecache: FileCache::new(filesizemod),
             parser: parser,
             scheduler: scheduler,
             splitting_factor: 1,
@@ -103,13 +106,24 @@ impl Interpreter {
         // run parser to produce arg matches for command nodes
         let mut match_map = self.run_parser(program)?;
 
+        debug!("Finished parser");
         // run parallelization to split any nodes into multiple nodes
         self.parallelize_program(program, &mut match_map)?;
 
+        debug!("Finished parallelization");
+        tracing::debug!("Program before scheduling: {:?}", program);
         // run scheduler
-        let location_assignment = self.scheduler.schedule(program, &mut match_map)?;
+        let location_assignment = self.scheduler.schedule(
+            program,
+            &mut match_map,
+            &self.config,
+            &mut self.filecache,
+            self.pwd.as_path(),
+        )?;
 
+        debug!("Finished scheduler");
         self.assign_locations(program, &mut match_map, location_assignment)?;
+        debug!("Finished assigning locations");
 
         Ok(())
     }
@@ -138,7 +152,7 @@ impl Interpreter {
             }
         }
         for (id, (elems, mut argmatches)) in replacement_map.into_iter() {
-            let new_ids = program.replace_node_parallel(id, elems)?;
+            let new_ids = program.replace_node_parallel(id, elems, false)?;
             assert!(new_ids.len() == argmatches.len());
             let _ = match_map.remove(&id);
             // add in each part of split argmatch to the overall match map
@@ -147,9 +161,44 @@ impl Interpreter {
                 match_map.insert(*new_id, argmatch);
             }
         }
+
+        self.parallelize_program_by_stdin(program, match_map)?;
         Ok(())
     }
 
+    /// Parallelize program over stdin.
+    fn parallelize_program_by_stdin(
+        &mut self,
+        program: &mut Program,
+        match_map: &mut HashMap<NodeId, ArgMatch>,
+    ) -> Result<()> {
+        let mut nodes_to_split: Vec<NodeId> = Vec::new();
+        for id in program.execution_order() {
+            let node = program.get_node(id).unwrap();
+            match node.get_elem() {
+                Elem::Cmd(_cmdnode) => {
+                    let argmatch = match_map.get(&id).unwrap();
+                    if argmatch.get_splittable_across_input() {
+                        nodes_to_split.push(id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for id in nodes_to_split.iter() {
+            let new_node_ids = program.split_across_input(*id)?;
+            if new_node_ids.len() <= 1 {
+                continue;
+            }
+            // replace each argmatch
+            let argmatch = match_map.get(id).unwrap().clone();
+            for new_id in new_node_ids.iter() {
+                match_map.insert(*new_id, argmatch.clone());
+            }
+            let _ = match_map.remove(id);
+        }
+        Ok(())
+    }
     /// Finds annotation matches (if any) and resolves Strings in each node of program.
     fn run_parser(&mut self, program: &mut Program) -> Result<HashMap<NodeId, ArgMatch>> {
         let mut match_map: HashMap<NodeId, ArgMatch> = HashMap::default();
@@ -241,6 +290,7 @@ impl Interpreter {
                         match writenode.get_stdout_mut() {
                             DashStream::File(ref mut fs) => {
                                 self.config.strip_file_path(fs, &Location::Client, &loc)?;
+                                fs.set_location(loc.clone());
                             }
                             _ => {}
                         }
@@ -250,6 +300,7 @@ impl Interpreter {
                         let mut input = readnode.get_stdin_mut();
                         self.config
                             .strip_file_path(&mut input, &Location::Client, &loc)?;
+                        input.set_location(loc.clone());
                     }
                 },
             }

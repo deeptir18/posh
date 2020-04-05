@@ -117,6 +117,14 @@ fn main() {
         &output_folder,
         VizType::Dash,
     );
+
+    run_viz(
+        &dot_binary,
+        "comm -12 /f/e/file1.txt /b/a/file1.txt > /local/local.txt",
+        "comm_basic",
+        &output_folder,
+        VizType::Dash,
+    );
 }
 
 fn run_viz(dot_binary: &str, cmd: &str, name: &str, output_folder: &str, viztype: VizType) {
@@ -159,6 +167,7 @@ fn visualize_shell_graph(dot_binary: &str, command: &str, name: &str, folder: &s
 }
 
 fn visualize_dash_graph(dot_binary: &str, command: &str, name: &str, folder: &str) -> Result<()> {
+    tracing::info!("Visualizing cmd {:?} with invocation {:?}", name, command);
     let file = Path::new(folder);
     let dot_path = file.join(format!("{}_dash_viz.dot", name));
     let graph_path = file.join(format!("{}_dash_viz.pdf", name));
@@ -172,6 +181,7 @@ fn visualize_dash_graph(dot_binary: &str, command: &str, name: &str, folder: &st
     };
 
     let mut interpreter = examples::get_test_interpreter();
+    interpreter.set_splitting_factor(2);
     let program = match interpreter.parse_command_line(command)? {
         Some(prog) => prog,
         None => {
