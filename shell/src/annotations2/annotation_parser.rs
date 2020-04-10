@@ -659,6 +659,7 @@ mod tests {
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         let parsed_param = match n {
@@ -681,6 +682,7 @@ mod tests {
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         let second_param = Param {
@@ -688,6 +690,7 @@ mod tests {
             size: ParamSize::One,
             default_value: "..".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         assert_eq!(first_param, *n[0].as_ref().unwrap());
@@ -705,12 +708,14 @@ mod tests {
             size: ParamSize::One,
             default_value: Default::default(),
             multiple: false,
+            ..Default::default()
         };
         let first_param: Param = Param {
             param_type: ArgType::InputFile,
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
         let arg_list = match n {
             Ok(v) => v,
@@ -809,6 +814,7 @@ mod tests {
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         let parsed_param = match n {
@@ -832,6 +838,7 @@ mod tests {
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         let first_opt = Opt {
@@ -853,6 +860,7 @@ mod tests {
             size: ParamSize::One,
             default_value: "..".to_string(),
             multiple: false,
+            ..Default::default()
         };
 
         assert_eq!(first_param, (*n[0].as_ref().unwrap()).1);
@@ -872,12 +880,14 @@ mod tests {
             size: ParamSize::One,
             default_value: "..".to_string(),
             multiple: false,
+            ..Default::default()
         };
         let first_param: Param = Param {
             param_type: ArgType::InputFile,
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
         let first_opt = Opt {
             short: "d".to_string(),
@@ -933,12 +943,14 @@ mod tests {
             size: ParamSize::One,
             default_value: "..".to_string(),
             multiple: false,
+            ..Default::default()
         };
         let first_param: Param = Param {
             param_type: ArgType::InputFile,
             size: ParamSize::One,
             default_value: ".".to_string(),
             multiple: false,
+            ..Default::default()
         };
         let first_opt = Opt {
             short: "d".to_string(),

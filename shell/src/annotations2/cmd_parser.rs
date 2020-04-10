@@ -394,6 +394,7 @@ mod tests {
             size: grammar::ParamSize::List(grammar::ListSeparator::Space),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),
@@ -403,6 +404,7 @@ mod tests {
                 param_with_list.clone(),
             ],
             parsing_options: Default::default(),
+            ..Default::default()
         };
         let parser = CmdParser::new("test_command");
         match parser.validate(&annotation) {
@@ -428,12 +430,14 @@ mod tests {
             size: grammar::ParamSize::List(grammar::ListSeparator::Space),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let param_with_comma: grammar::Argument = grammar::Argument::LoneParam(grammar::Param {
             param_type: grammar::ArgType::Str,
             size: grammar::ParamSize::List(grammar::ListSeparator::Comma),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),

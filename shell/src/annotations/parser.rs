@@ -896,6 +896,7 @@ mod tests {
             size: grammar::ParamSize::List(grammar::ListSeparator::Space),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),
@@ -930,12 +931,14 @@ mod tests {
             size: grammar::ParamSize::List(grammar::ListSeparator::Space),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let param_with_comma: grammar::Argument = grammar::Argument::LoneParam(grammar::Param {
             param_type: grammar::ArgType::Str,
             size: grammar::ParamSize::List(grammar::ListSeparator::Comma),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
         let annotation = grammar::Command {
             command_name: "test_command".to_string(),
@@ -953,6 +956,7 @@ mod tests {
             size: grammar::ParamSize::List(grammar::ListSeparator::Space),
             default_value: "".to_string(),
             multiple: false,
+            ..Default::default()
         });
 
         let annotation = grammar::Command {
@@ -965,7 +969,8 @@ mod tests {
         parser.add_annotation(annotation).unwrap();
 
         let invocation = vec!["file1".to_string(), "file2".to_string()];
-        let parsed_command: grammar::ParsedCommand = parser.parse_command(invocation).unwrap();
+        let (parsed_commands, _, _) = parser.parse_command(invocation).unwrap();
+        let parsed_command: &grammar::ParsedCommand = &parsed_commands[0];
         assert_eq!(parsed_command.command_name, "cat".to_string());
         assert_eq!(parsed_command.typed_args.len(), 2);
         assert_eq!(
@@ -991,6 +996,7 @@ mod tests {
                 size: grammar::ParamSize::One,
                 default_value: "".to_string(),
                 multiple: false,
+                ..Default::default()
             },
         );
         let file_param_output: grammar::Argument = grammar::Argument::OptWithParam(
@@ -1005,6 +1011,7 @@ mod tests {
                 size: grammar::ParamSize::One,
                 default_value: "".to_string(),
                 multiple: false,
+                ..Default::default()
             },
         );
 
@@ -1042,6 +1049,7 @@ mod tests {
                 size: grammar::ParamSize::One,
                 default_value: ".".to_string(),
                 multiple: false,
+                ..Default::default()
             },
         );
 
@@ -1072,8 +1080,8 @@ mod tests {
             "foo".to_string(),
             "bar".to_string(),
         ];
-        let parsed_create: grammar::ParsedCommand =
-            parser.parse_command(create_invocation).unwrap();
+        let (parsed_creates, _, _) = parser.parse_command(create_invocation).unwrap();
+        let parsed_create: &grammar::ParsedCommand = &parsed_creates[0];
         assert_eq!(parsed_create.command_name, "tar".to_string());
         assert_eq!(parsed_create.typed_args.len(), 6);
         assert!(parsed_create
@@ -1102,8 +1110,8 @@ mod tests {
             "-C".to_string(),
             "foo/".to_string(),
         ];
-        let parsed_extract: grammar::ParsedCommand =
-            parser.parse_command(extract_invocation1).unwrap();
+        let (parsed_extracts, _, _) = parser.parse_command(extract_invocation1).unwrap();
+        let parsed_extract: &grammar::ParsedCommand = &parsed_extracts[0];
         assert_eq!(parsed_extract.command_name, "tar".to_string());
         assert_eq!(parsed_extract.typed_args.len(), 6);
         assert!(parsed_extract
@@ -1126,10 +1134,10 @@ mod tests {
             .typed_args
             .contains(&("foo/".to_string(), grammar::ArgType::OutputFile)));
         let extract_invocation2 = vec!["-xzf".to_string(), "foobar.tar".to_string()];
-        let parsed_extract2: grammar::ParsedCommand =
-            parser.parse_command(extract_invocation2).unwrap();
-        assert_eq!(parsed_extract.command_name, "tar".to_string());
-        assert_eq!(parsed_extract.typed_args.len(), 6);
+        let (parsed_extract2s, _, _) = parser.parse_command(extract_invocation2).unwrap();
+        let parsed_extract2: &grammar::ParsedCommand = &parsed_extract2s[0];
+        assert_eq!(parsed_extract2.command_name, "tar".to_string());
+        assert_eq!(parsed_extract2.typed_args.len(), 6);
         assert!(parsed_extract2
             .typed_args
             .contains(&("-x".to_string(), grammar::ArgType::Str)));

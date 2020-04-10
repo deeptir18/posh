@@ -135,7 +135,8 @@ impl Info for WriteNode {
         Ok(())
     }
 
-    fn set_stderr(&mut self, _stream: DashStream) -> Result<()> {
+    fn set_stderr(&mut self, stream: DashStream) -> Result<()> {
+        println!("{:?}", stream);
         unimplemented!()
     }
 

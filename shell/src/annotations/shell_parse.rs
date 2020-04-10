@@ -612,27 +612,27 @@ impl ShellSplit {
         let mut parts = self.elts.split(|elt| elt.clone() == RawShellElement::Pipe);
         // merge all parts into the top level graph.
         while let Some(subcmd) = parts.next() {
-            //debug!("next part: {:?}", subcmd);
+            //tracing::debug!("next part: {:?}", subcmd);
             let new_subgraph = get_subgraph(subcmd)?;
-            //debug!("new subgraph: {:?}", new_subgraph);
+            //tracing::debug!("new subgraph: {:?}", new_subgraph);
             if graph.nodes.len() == 0 {
-                /*debug!(
+                /*tracing::debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );*/
                 graph.merge(new_subgraph, None)?;
-            //debug!("new graph nodes: {:?}", graph.nodes.keys());
+            //tracing::debug!("new graph nodes: {:?}", graph.nodes.keys());
             } else {
                 // TODO: this accessing of the first value of front and sink doesn't really scale
                 let graph_end = graph.get_end()[0];
                 let subgraph_front = new_subgraph.get_front()[0];
-                /*debug!(
+                /*tracing::debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );
-                debug!(
+                tracing::debug!(
                     "proposed link: {:?}",
                     ShellLink {
                         left: graph_end,
@@ -649,7 +649,7 @@ impl ShellSplit {
                         false,
                     )),
                 )?;
-                //debug!("new graph nodes: {:?}", graph.nodes.keys());
+                //tracing::debug!("new graph nodes: {:?}", graph.nodes.keys());
             }
         }
         Ok(graph)
@@ -725,73 +725,4 @@ fn get_subgraph(subcmd: &[RawShellElement]) -> Result<ShellGraph> {
         }
     }
     Ok(graph)
-}
-
-#[cfg(test)]
-// TODO: FIGURE OUT HOW TO TEST THIS FOR REAL
-mod test {
-    use super::*;
-    //use std::collections::hash_map::Iter as HashIter;
-    //use std::slice::Iter as SliceIter;
-    //
-
-    #[test]
-    fn test_mogrify() {
-        let cmd = "mogrify  -format gif -path thumbs_dir -thumbnail 100x100 data_dir/*.jpg";
-        let shell_split = ShellSplit::new(cmd).unwrap();
-        let shell_prog = shell_split.convert_into_shell_graph().unwrap();
-        let program = shell_prog.convert_into_program().unwrap();
-        debug!("program: {:?}", program);
-    }
-
-    #[test]
-    fn test_shell_split_to_graph() {
-        let cmd = "grep foo <( cat bar ) <( cat bar2 ) | wc > output.txt 2> err.txt";
-        match ShellSplit::new(cmd) {
-            Ok(shell_split) => match shell_split.convert_into_shell_graph() {
-                Ok(shell_prog) => {
-                    debug!("shell prog: {:?}", shell_prog);
-                    debug!("________");
-                    match shell_prog.convert_into_program() {
-                        Ok(p) => {
-                            debug!("Program!");
-                            debug!("{:?}", p);
-                            //assert!(false);
-                        }
-                        Err(e) => {
-                            debug!("Failed to convert shell split into program: {:?}", e);
-                            assert!(false);
-                        }
-                    }
-                }
-                Err(e) => {
-                    debug!("Failed to convert split into program: {:?}", e);
-                    assert!(false);
-                }
-            },
-            Err(e) => {
-                debug!("Failed to divide into shell split: {:?}", e);
-                assert!(false);
-            }
-        }
-    }
-
-    #[test]
-    fn test_scan_command() {
-        let cmd = "pr -mts, <( cat annotated | jq \".ip\" | tr -d '\"' ) <( cat annotated | jq -c \".zannotate.routing.asn\" ) | awk -F',' '{ a[$2]++; } END { for (n in a) print n \",\" a[n] } ' | sort -k2 -n -t',' -r > as_popularity";
-        match ShellSplit::new(cmd) {
-            Ok(shell_split) => match shell_split.convert_into_shell_graph() {
-                Ok(shell_prog) => {
-                    debug!("Prog: {:?}", shell_prog);
-                }
-                Err(e) => {
-                    debug!("{:?}", e);
-                }
-            },
-            Err(e) => {
-                debug!("Failed to parse command into shell split: {:?}", e);
-                assert!(false);
-            }
-        };
-    }
 }

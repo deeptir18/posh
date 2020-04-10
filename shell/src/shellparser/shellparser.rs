@@ -170,7 +170,10 @@ impl ShellGraphNode {
                         match next_elt {
                             RawShellElement::Str(filename) => {
                                 let mut writenode = WriteNode::default();
-                                writenode.set_stderr(DashStream::File(FileStream::new(
+                                // Write nodes that write to stderr still consider output as
+                                // `stdout`
+                                // Only *cmdnodes* have `stderr` output
+                                writenode.set_stdout(DashStream::File(FileStream::new(
                                     Path::new(&filename),
                                     Location::Client,
                                 )))?;
@@ -243,7 +246,7 @@ impl ShellGraphNode {
                 .get_mut_node(stderr_node_id)
                 .unwrap()
                 .get_mut_elem();
-            stderr_elem.add_stderr(DashStream::Pipe(pipe))?;
+            stderr_elem.add_stdin(DashStream::Pipe(pipe))?;
             new_program.add_unique_edge(cmd_node_id, stderr_node_id);
         }
         Ok(new_program)
@@ -633,27 +636,27 @@ impl ShellSplit {
         let mut parts = self.elts.split(|elt| elt.clone() == RawShellElement::Pipe);
         // merge all parts into the top level graph.
         while let Some(subcmd) = parts.next() {
-            //debug!("next part: {:?}", subcmd);
+            //tracing::debug!("next part: {:?}", subcmd);
             let new_subgraph = get_subgraph(subcmd)?;
-            //debug!("new subgraph: {:?}", new_subgraph);
+            //tracing::debug!("new subgraph: {:?}", new_subgraph);
             if graph.nodes.len() == 0 {
-                /*debug!(
+                /*tracing::debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );*/
                 graph.merge(new_subgraph, None)?;
-            //debug!("new graph nodes: {:?}", graph.nodes.keys());
+            //tracing::debug!("new graph nodes: {:?}", graph.nodes.keys());
             } else {
                 // TODO: this accessing of the first value of front and sink doesn't really scale
                 let graph_end = graph.get_end()[0];
                 let subgraph_front = new_subgraph.get_front()[0];
-                /*debug!(
+                /*tracing::debug!(
                     "current graph nodes: {:?}, subgraph: {:?}",
                     graph.nodes.keys(),
                     new_subgraph.nodes.keys()
                 );
-                debug!(
+                tracing::debug!(
                     "proposed link: {:?}",
                     ShellLink {
                         left: graph_end,
@@ -670,7 +673,7 @@ impl ShellSplit {
                         false,
                     )),
                 )?;
-                //debug!("new graph nodes: {:?}", graph.nodes.keys());
+                //tracing::debug!("new graph nodes: {:?}", graph.nodes.keys());
             }
         }
         Ok(graph)
@@ -762,7 +765,7 @@ mod test {
         let shell_split = ShellSplit::new(cmd).unwrap();
         let shell_prog = shell_split.convert_into_shell_graph().unwrap();
         let program = shell_prog.convert_into_program().unwrap();
-        debug!("program: {:?}", program);
+        tracing::debug!("program: {:?}", program);
     }
 
     #[test]
@@ -771,27 +774,27 @@ mod test {
         match ShellSplit::new(cmd) {
             Ok(shell_split) => match shell_split.convert_into_shell_graph() {
                 Ok(shell_prog) => {
-                    debug!("shell prog: {:?}", shell_prog);
-                    debug!("________");
+                    tracing::debug!("shell prog: {:?}", shell_prog);
+                    tracing::debug!("________");
                     match shell_prog.convert_into_program() {
                         Ok(p) => {
-                            debug!("Program!");
-                            debug!("{:?}", p);
+                            tracing::debug!("Program!");
+                            tracing::debug!("{:?}", p);
                             //assert!(false);
                         }
                         Err(e) => {
-                            debug!("Failed to convert shell split into program: {:?}", e);
+                            tracing::debug!("Failed to convert shell split into program: {:?}", e);
                             assert!(false);
                         }
                     }
                 }
                 Err(e) => {
-                    debug!("Failed to convert split into program: {:?}", e);
+                    tracing::debug!("Failed to convert split into program: {:?}", e);
                     assert!(false);
                 }
             },
             Err(e) => {
-                debug!("Failed to divide into shell split: {:?}", e);
+                tracing::debug!("Failed to divide into shell split: {:?}", e);
                 assert!(false);
             }
         }
@@ -803,14 +806,14 @@ mod test {
         match ShellSplit::new(cmd) {
             Ok(shell_split) => match shell_split.convert_into_shell_graph() {
                 Ok(shell_prog) => {
-                    debug!("Prog: {:?}", shell_prog);
+                    tracing::debug!("Prog: {:?}", shell_prog);
                 }
                 Err(e) => {
-                    debug!("{:?}", e);
+                    tracing::debug!("{:?}", e);
                 }
             },
             Err(e) => {
-                debug!("Failed to parse command into shell split: {:?}", e);
+                tracing::debug!("Failed to parse command into shell split: {:?}", e);
                 assert!(false);
             }
         };
