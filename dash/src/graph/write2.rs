@@ -274,6 +274,18 @@ impl Execute for WriteNode {
         _channels: SharedChannelMap,
         _tmp_folder: PathBuf,
     ) -> Result<()> {
+        // open a file for appending
+        match &self.output {
+            DashStream::File(filestream) => {
+                let f = filestream.open()?;
+                drop(f);
+            }
+            DashStream::Fifo(fifostream) => {
+                // first, create the fifo
+                fifostream.create()?;
+            }
+            _ => {}
+        }
         Ok(())
     }
 
@@ -289,18 +301,6 @@ impl Execute for WriteNode {
             self.node_id
         );
 
-        // open a file for appending
-        match &self.output {
-            DashStream::File(filestream) => {
-                let f = filestream.open()?;
-                drop(f);
-            }
-            DashStream::Fifo(fifostream) => {
-                // first, create the fifo
-                fifostream.create()?;
-            }
-            _ => {}
-        }
         // open the file for appending
         for input_stream in self.stdin.iter() {
             match &input_stream {
