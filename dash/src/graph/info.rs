@@ -38,11 +38,11 @@ pub trait Info {
 
     fn resolve_args(&mut self, parent_dir: PathBuf) -> Result<()>;
 
-    /// Modify the pipe to be a netstream.
-    fn replace_pipe_with_net(
+    /// Replace pipe with given dashstream
+    fn replace_pipe_with_ds(
         &mut self,
         pipe: PipeStream,
-        net: NetStream,
+        repl: DashStream,
         iotype: IOType,
     ) -> Result<()>;
 

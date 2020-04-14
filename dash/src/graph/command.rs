@@ -243,6 +243,11 @@ impl CommandNode {
         self.args.push(arg);
     }
 
+    /// Only used for integration testing.
+    pub fn add_resolved_arg(&mut self, arg: String) {
+        self.resolved_args.push(arg);
+    }
+
     /// Returns the stream identifier for the stdout, stdin, and stderr handles for *this node*
     fn get_handle_identifier(&self, iotype: IOType) -> HandleIdentifier {
         HandleIdentifier::new(self.prog_id, self.node_id, iotype)
@@ -388,10 +393,13 @@ impl Info for CommandNode {
         }
     }
 
+    /// For command nodes, input can be pipes from other processes,
+    /// tcp streams from nodes on other machines, or FILES.
     fn add_stdin(&mut self, stream: DashStream) -> Result<()> {
         match stream {
             DashStream::Pipe(_) => {}
             DashStream::Tcp(_) => {}
+            DashStream::File(_) => {}
             _ => {
                 bail!(
                     "Cannot have stream of type {:?} as input to command node",
@@ -596,10 +604,10 @@ impl Info for CommandNode {
         Ok(())
     }
     /// Modify the pipe to be a netstream.
-    fn replace_pipe_with_net(
+    fn replace_pipe_with_ds(
         &mut self,
         pipe: PipeStream,
-        net: NetStream,
+        repl: DashStream,
         iotype: IOType,
     ) -> Result<()> {
         match iotype {
@@ -609,18 +617,18 @@ impl Info for CommandNode {
                     .retain(|x| x.clone() != DashStream::Pipe(pipe.clone()));
                 let new_len = self.stdin.len();
                 assert!(new_len == prev_len - 1);
-                self.stdin.push(DashStream::Tcp(net));
+                self.stdin.push(repl.clone());
             }
             IOType::Stdout => {
                 if let Some(_stream) = &self.stdout {
-                    self.stdout = Some(DashStream::Tcp(net));
+                    self.stdout = Some(repl.clone());
                 } else {
                     bail!("Trying to replace stdout pipestream with net but node has no stdout");
                 }
             }
             IOType::Stderr => {
                 if let Some(_stream) = &self.stderr {
-                    self.stderr = Some(DashStream::Tcp(net));
+                    self.stderr = Some(repl.clone());
                 } else {
                     bail!("Trying to replace stderr pipestream with net but node has no stderr");
                 }
@@ -736,23 +744,30 @@ impl Execute for CommandNode {
                 }
             }
         }
-
         let child = cmd.spawn().expect("Failed to spawn child");
-        let stdin_handle = child.stdin.expect("Could not get stdin handle for proc");
-        pipes.insert(
-            self.get_handle_identifier(IOType::Stdin),
-            OutputHandle::Stdin(stdin_handle),
-        )?;
-        let stdout_handle = child.stdout.expect("Could not get stdout handle for proc");
-        pipes.insert(
-            self.get_handle_identifier(IOType::Stdout),
-            OutputHandle::Stdout(stdout_handle),
-        )?;
-        let stderr_handle = child.stderr.expect("Could not get stderr handle for proc");
-        pipes.insert(
-            self.get_handle_identifier(IOType::Stderr),
-            OutputHandle::Stderr(stderr_handle),
-        )?;
+        if self.stdin.len() > 0 {
+            let stdin_handle = child.stdin.expect("Could not get stdin handle for proc");
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stdin),
+                OutputHandle::Stdin(stdin_handle),
+            )?;
+        }
+
+        if let Some(_) = &self.stdout {
+            let stdout_handle = child.stdout.expect("Could not get stdout handle for proc");
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stdout),
+                OutputHandle::Stdout(stdout_handle),
+            )?;
+        }
+
+        if let Some(_) = &self.stderr {
+            let stderr_handle = child.stderr.expect("Could not get stderr handle for proc");
+            pipes.insert(
+                self.get_handle_identifier(IOType::Stderr),
+                OutputHandle::Stderr(stderr_handle),
+            )?;
+        };
 
         Ok(())
     }
@@ -895,7 +910,7 @@ impl Execute for CommandNode {
 }
 
 fn redirect_stdin(
-    node_id: NodeId,
+    _node_id: NodeId,
     prog_id: ProgId,
     stdin_handle: OutputHandle,
     stdin_streams: Vec<DashStream>,
@@ -915,13 +930,14 @@ fn redirect_stdin(
             DashStream::Pipe(pipestream) => {
                 if pipestream.get_bufferable() {
                     let channel_end = channels.remove(&get_channel_name(
-                        node_id,
+                        pipestream.get_left(),
                         PipeMode::Read,
                         pipestream.get_output_type(),
                     ))?;
                     // copy from the buffer file, not the process
+                    // buffered pipe is indexed by left end of the pipe
                     let mut buffered_pipe = BufferedPipe::new(
-                        node_id,
+                        pipestream.get_left(),
                         pipestream.get_output_type(),
                         tmp_folder.as_path(),
                         PipeMode::Read,
@@ -935,9 +951,24 @@ fn redirect_stdin(
                         pipestream.get_left(),
                         pipestream.get_output_type(),
                     );
-                    let mut prev_handle = pipes.remove(&handle_identifier)?;
-                    copy(&mut prev_handle, &mut stdin)?;
+                    // if left side of the pipe is a command node, then there will be a previous
+                    // handle
+                    let contains = pipes.contains_key(&handle_identifier)?;
+                    if contains {
+                        let mut prev_handle = pipes.remove(&handle_identifier)?;
+                        copy(&mut prev_handle, &mut stdin)?;
+                    } else {
+                        tracing::debug!(
+                            "No pipe found for handle identifier: {:?}",
+                            handle_identifier
+                        );
+                    }
                 }
+            }
+            DashStream::File(filestream) => {
+                // Open a read version of the file, and copy it into the current process
+                let mut file_handle = filestream.open()?;
+                copy(&mut file_handle, &mut stdin)?;
             }
             _ => {
                 bail!("Command node should not see input from file, stdout, or stderr stream handle: {:?}", input_stream);
@@ -957,8 +988,6 @@ fn redirect_output(
     tmp_folder: PathBuf,
     iotype: IOType,
 ) -> Result<()> {
-    // todo: would be better to copy directly into the buffered pipe file, and just have a separate
-    // process waiting on knowing that the writing is done
     match stream.clone() {
         DashStream::Tcp(netstream) => {
             let mut tcp_stream = match network_connections.remove(&netstream) {

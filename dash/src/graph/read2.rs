@@ -3,13 +3,12 @@ use super::filestream::FileStream;
 use super::info::Info;
 use super::pipe::SharedChannelMap;
 use super::rapper::copy_wrapper as copy;
+use super::rapper::stream_initiate_filter;
 use super::{program, stream, Location, Result};
 use failure::bail;
 use program::{Link, NodeId, ProgId};
 use std::path::PathBuf;
-use stream::{
-    DashStream, HandleIdentifier, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap,
-};
+use stream::{DashStream, IOType, NetStream, PipeStream, SharedPipeMap, SharedStreamMap};
 use tracing::error;
 
 /// Node that reads from files and sends the output to the specified outputs.
@@ -179,36 +178,51 @@ impl Info for ReadNode {
     }
 
     /// Modify the pipe to be a netstream.
-    fn replace_pipe_with_net(
+    fn replace_pipe_with_ds(
         &mut self,
         pipe: PipeStream,
-        net: NetStream,
+        repl: DashStream,
         iotype: IOType,
     ) -> Result<()> {
         match iotype {
-            IOType::Stdout => match &self.stdout {
-                DashStream::Pipe(ps) => {
-                    if *ps == pipe {
-                        self.stdout = DashStream::Tcp(net);
-                        Ok(())
-                    } else {
-                        error!("In replace_pipe_with_net, pipe {:?} doesn't exist to replace with net {:?}", pipe, net);
-                        bail!("Pipe doesn't exist in replace_pipe_with_net");
+            IOType::Stdout => {
+                match &self.stdout {
+                    DashStream::Pipe(ps) => {
+                        if *ps == pipe {
+                            self.stdout = repl.clone();
+                            Ok(())
+                        } else {
+                            error!("In replace_pipe_with_ds, pipe {:?} doesn't exist to replace with net {:?}", pipe, repl);
+                            bail!("Pipe doesn't exist in replace_pipe_with_ds");
+                        }
+                    }
+                    _ => {
+                        error!("In replace_pipe_with_ds, pipe {:?} doesn't exist to replace with net {:?}", pipe, repl);
+                        bail!("Pipe doesn't exist in replace_pipe_with_ds");
                     }
                 }
-                _ => {
-                    error!("In replace_pipe_with_net, pipe {:?} doesn't exist to replace with net {:?}", pipe, net);
-                    bail!("Pipe doesn't exist in replace_pipe_with_net");
-                }
-            },
+            }
             _ => Ok(()),
         }
     }
-    fn get_outward_streams(&self, _iotype: IOType, _is_server: bool) -> Vec<NetStream> {
-        match &self.stdout {
-            DashStream::Tcp(netstream) => vec![netstream.clone()],
-            _ => vec![],
+    fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
+        let mut ret: Vec<NetStream> = Vec::new();
+        match iotype {
+            IOType::Stdout => match &self.stdout {
+                DashStream::Tcp(netstream) => {
+                    if stream_initiate_filter(
+                        DashStream::Tcp(netstream.clone()),
+                        self.node_id,
+                        is_server,
+                    ) {
+                        ret.push(netstream.clone());
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
         }
+        ret
     }
 }
 
@@ -224,7 +238,7 @@ impl Execute for ReadNode {
     }
     fn redirect(
         &mut self,
-        mut pipes: SharedPipeMap,
+        _pipes: SharedPipeMap,
         mut network_connections: SharedStreamMap,
         _channels: SharedChannelMap,
         _tmp_folder: PathBuf,
@@ -236,15 +250,9 @@ impl Execute for ReadNode {
                 // hopefully this will immediately block until the next process is ready
                 copy(&mut file_handle, &mut tcpstream)?;
             }
-            // TODO: technically if multiple nodes and writing to one node -> then the aggregate
-            // node should decide when to pull into the pipe
-            // But realistically: when are you going to have multiple non write nodes into the same
-            // node?
-            DashStream::Pipe(pipestream) => {
-                let handle_identifier =
-                    HandleIdentifier::new(self.prog_id, self.node_id, pipestream.get_output_type());
-                let mut input_handle = pipes.remove(&handle_identifier)?;
-                copy(&mut file_handle, &mut input_handle)?;
+            DashStream::Pipe(pipe) => {
+                error!("Read node should not send output to a pipe: {:?}", pipe);
+                bail!("Read node should not send output over a pipe: {:?}", pipe);
             }
             _ => {
                 error!(

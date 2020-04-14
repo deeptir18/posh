@@ -267,7 +267,7 @@ fn run_stream_setup(
 /// program: Program -> subprogram to be executed.
 /// shared_map: SharedStreamMap: handle for map with client's subprogram TCP streams.
 /// port: String -> port that server is listening to
-fn execute_subprogram(
+pub fn execute_subprogram(
     loc: Location,
     mut prog: program::Program,
     shared_stream_map: SharedStreamMap,
@@ -291,7 +291,6 @@ fn execute_subprogram(
             }
         }
         Location::Server(ip) => {
-            debug!("asking {:?} to execute subprogram", ip);
             // send a request to the server to execute this subprogram
             let addr = Addr::new(&ip, &port).get_addr();
             let mut stream = TcpStream::connect(addr)?;
@@ -302,7 +301,6 @@ fn execute_subprogram(
                 &mut stream,
             )?;
             stream.set_nonblocking(false)?;
-            debug!("waiting for the server to respond");
             let (_, next_msg) = read_msg_and_type(&mut stream)?;
             let msg = deserialize(&next_msg[..])?;
             match msg {

@@ -143,9 +143,15 @@ impl Rapper for Elem {
         iotype: IOType,
     ) -> Result<()> {
         match self {
-            Elem::Write(write_node) => write_node.replace_pipe_with_net(pipe, net, iotype),
-            Elem::Read(read_node) => read_node.replace_pipe_with_net(pipe, net, iotype),
-            Elem::Cmd(cmd_node) => cmd_node.replace_pipe_with_net(pipe, net, iotype),
+            Elem::Write(write_node) => {
+                write_node.replace_pipe_with_ds(pipe, DashStream::Tcp(net), iotype)
+            }
+            Elem::Read(read_node) => {
+                read_node.replace_pipe_with_ds(pipe, DashStream::Tcp(net), iotype)
+            }
+            Elem::Cmd(cmd_node) => {
+                cmd_node.replace_pipe_with_ds(pipe, DashStream::Tcp(net), iotype)
+            }
         }
     }
     fn get_stdin_len(&self) -> usize {
@@ -416,7 +422,7 @@ impl Node {
             .redirect(pipes, network_connections, channels, tmp_folder)
     }
 
-    pub fn execute(
+    pub fn spawn(
         &mut self,
         pipes: SharedPipeMap,
         network_connections: SharedStreamMap,
@@ -1306,6 +1312,26 @@ impl Program {
         Ok(())
     }
 
+    /// Replaces an INPUT pipe with a filestream.
+    pub fn replace_input_pipe(
+        &mut self,
+        id: NodeId,
+        pipe: &PipeStream,
+        fs: FileStream,
+    ) -> Result<()> {
+        assert_eq!(id, pipe.get_right());
+        let node = self.nodes.get_mut(&id).unwrap();
+        match node.get_mut_elem() {
+            Elem::Cmd(ref mut cmdnode) => {
+                cmdnode.replace_pipe_with_ds(pipe.clone(), DashStream::File(fs), IOType::Stdin)?;
+            }
+            _ => {
+                bail!("Should not be calling replace_input_pipe with read or write elem");
+            }
+        }
+        Ok(())
+    }
+
     // Finds source->sink paths, ignoring paths that involve output for stderr.
     // RIGHT NOW, this works because we have the guarantee that each node has at most 2 outward
     // edges, 1 for stdout and 1 for stderr.
@@ -1653,7 +1679,7 @@ impl Program {
             let mut node_clone = node.clone();
             let tmp = Path::new(&tmp_folder).to_path_buf();
             // This call is non-blocking
-            node_clone.execute(pipe_map_copy, stream_map_copy, channel_map.clone(), tmp)?;
+            node_clone.spawn(pipe_map_copy, stream_map_copy, channel_map.clone(), tmp)?;
             tracing::debug!("finished spawning: {:?}", node);
         }
 
@@ -1686,6 +1712,7 @@ impl Program {
                 Ok(res) => match res {
                     Ok(_) => {}
                     Err(e) => {
+                        tracing::error!("Error on thread {:?}", count);
                         bail!(
                             "Node failed to execute: {:?} id {:?}",
                             e,

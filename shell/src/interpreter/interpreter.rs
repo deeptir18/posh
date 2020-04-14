@@ -7,7 +7,7 @@ use config::network::FileNetwork;
 use dash::graph::filestream::{FifoMode, FifoStream, FileStream};
 use dash::graph::info::Info;
 use dash::graph::program::{Elem, NodeId, Program};
-use dash::graph::stream::DashStream;
+use dash::graph::stream::{DashStream, PipeStream};
 use dash::graph::Location;
 use failure::bail;
 use grammar::{AccessType, ArgType};
@@ -315,6 +315,38 @@ impl Interpreter {
 
         // ensures all necessary pipestreams are converted to tcpstreams
         prog.make_pipes_networked()?;
+
+        // TODO: for any read nodes -> pipes -> cmdnodes scheduled on same machine,
+        // remove readnode and have cmdnode access the file directly
+        let mut readmap: HashMap<PipeStream, FileStream> = HashMap::new();
+        for id in prog.get_nodes_iter() {
+            let node = prog.get_node(&id).unwrap();
+            match node.get_elem() {
+                Elem::Read(readnode) => {
+                    if let Some(output) = readnode.get_stdout() {
+                        match output {
+                            DashStream::Pipe(ps) => {
+                                assert_eq!(
+                                    assignments.get(&ps.get_left()),
+                                    assignments.get(&ps.get_right())
+                                );
+                                readmap.insert(ps.clone(), readnode.get_input_ref().clone());
+                            }
+                            _ => {}
+                        }
+                    } else {
+                        bail!("Readnode parsed without output: {:?}", readnode);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for (ps, fs) in readmap.iter() {
+            // remove readnode
+            prog.remove_node(ps.get_left());
+            // replace stdin of right side of pipe with Dash filestream instead
+            prog.replace_input_pipe(ps.get_left(), &ps, fs.clone())?;
+        }
 
         // iterate through all cmdnodes and reconstruct final arguments
         for (id, node) in prog.get_mut_nodes_iter() {

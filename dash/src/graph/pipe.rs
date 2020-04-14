@@ -64,9 +64,9 @@ pub struct BufferedPipe {
 
 /// Creates a new FIFO with read, write permissions for the owner.
 pub fn create_buffer_file(tmp: &Path, id: NodeId, iotype: IOType) -> Result<()> {
-    let _ = OpenOptions::new()
-        .create(true)
-        .open(buffer_name(tmp, id, iotype))?;
+    let mut open_options = OpenOptions::new();
+    open_options.write(true).create(true).read(true);
+    open_options.open(buffer_name(tmp, id, iotype))?;
     Ok(())
 }
 
@@ -152,6 +152,21 @@ impl Write for BufferedPipe {
 
 impl Read for BufferedPipe {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let normal_read = |handle: &mut File, buffer: &mut [u8]| -> std::io::Result<usize> {
+            match handle.read(buffer) {
+                Ok(size) => {
+                    return Ok(size);
+                }
+                Err(e) => {
+                    println!("Error reading: {:?}", e);
+                    return Err(e);
+                }
+            }
+        };
+        // if already finished writing, do read as normal
+        if self.finished_writing {
+            return normal_read(&mut self.handle, buf);
+        }
         let receiver = match &mut self.channel {
             ChannelEnd::Receiver(ref mut r) => r,
             _ => {
@@ -168,6 +183,8 @@ impl Read for BufferedPipe {
                         Ok(num) => {
                             assert_eq!(num, 1);
                             self.finished_writing = true;
+                            // now do a normal read
+                            return normal_read(&mut self.handle, buf);
                         }
                         Err(e) => {
                             return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Didn't receive msg on the channel: {:?}", e)));
@@ -192,10 +209,7 @@ impl Read for BufferedPipe {
                             return Err(e);
                         }
                     }
-
-
                 }
-
             }
         }
     }

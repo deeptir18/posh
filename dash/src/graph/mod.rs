@@ -41,15 +41,35 @@ impl Default for Location {
 /// Safe shared wrapper around a HashMap.
 pub struct SharedMap<K, V>(pub Arc<Mutex<HashMap<K, V>>>);
 
-impl<K: PartialEq + Debug + Clone + Default + Hash + Eq, V> SharedMap<K, V> {
+impl<K: PartialEq + Debug + Clone + Default + Hash + Eq + Debug, V> SharedMap<K, V> {
     pub fn new() -> SharedMap<K, V> {
         let map: HashMap<K, V> = HashMap::default();
         SharedMap(Arc::new(Mutex::new(map)))
     }
 
+    pub fn keys(&self) -> Result<Vec<K>> {
+        let map = match self.0.lock() {
+            Ok(m) => m,
+            Err(e) => bail!("Lock is poisoned: {:?}", e),
+        };
+
+        let keys: Vec<K> = map.iter().map(|(k, _v)| k.clone()).collect();
+        Ok(keys)
+    }
+
     /// Returns a new reference to the underlying map
     pub fn clone(&self) -> SharedMap<K, V> {
         SharedMap(self.0.clone())
+    }
+
+    pub fn contains_key(&self, key: &K) -> Result<bool> {
+        let map = match self.0.lock() {
+            Ok(m) => m,
+            Err(e) => bail!("Lock is poisoned: {:?}", e),
+        };
+        let ret = map.contains_key(key);
+        drop(map);
+        Ok(ret)
     }
 
     /// Removes the key from the map if it exists

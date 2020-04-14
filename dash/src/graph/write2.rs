@@ -2,6 +2,7 @@ use super::execute::Execute;
 use super::info::{resolve_file_streams, Info};
 use super::pipe::{get_channel_name, BufferedPipe, PipeMode, SharedChannelMap};
 use super::rapper::copy_wrapper as copy;
+use super::rapper::stream_initiate_filter;
 use super::{program, stream, Location, Result};
 use failure::bail;
 use program::{Link, NodeId, ProgId};
@@ -135,8 +136,7 @@ impl Info for WriteNode {
         Ok(())
     }
 
-    fn set_stderr(&mut self, stream: DashStream) -> Result<()> {
-        println!("{:?}", stream);
+    fn set_stderr(&mut self, _stream: DashStream) -> Result<()> {
         unimplemented!()
     }
 
@@ -200,10 +200,10 @@ impl Info for WriteNode {
     }
 
     /// Modify the pipe to be a netstream.
-    fn replace_pipe_with_net(
+    fn replace_pipe_with_ds(
         &mut self,
         pipe: PipeStream,
-        net: NetStream,
+        repl: DashStream,
         iotype: IOType,
     ) -> Result<()> {
         match iotype {
@@ -213,7 +213,7 @@ impl Info for WriteNode {
                     match stream {
                         DashStream::Pipe(ps) => {
                             if *ps == pipe {
-                                std::mem::replace(stream, DashStream::Tcp(net.clone()));
+                                std::mem::replace(stream, repl.clone());
                                 replaced = true;
                                 break;
                             } else {
@@ -224,25 +224,45 @@ impl Info for WriteNode {
                     }
                 }
                 if !replaced {
-                    error!("In replace_pipe_with_net, pipe {:?} doesn't exist to replace with net {:?}", pipe, net);
-                    bail!("Pipe doesn't exist in replace_pipe_with_net");
+                    error!(
+                        "In replace_pipe_with_ds, pipe {:?} doesn't exist to replace with ds {:?}",
+                        pipe, repl
+                    );
+                    bail!("Pipe doesn't exist in replace_pipe_with_ds");
                 } else {
                     Ok(())
                 }
             }
             IOType::Stdout => {
-                error!("Calling replace_pipe_with_net for iotype STDOUT in write node");
+                error!("Calling replace_pipe_with_ds for iotype STDOUT in write node");
                 bail!("No pipe stdout for write node");
             }
             IOType::Stderr => {
-                error!("Calling replace_pipe_with_net for iotype STDERR in write node");
+                error!("Calling replace_pipe_with_ds for iotype STDERR in write node");
                 bail!("No pipe stderr for write node");
             }
         }
     }
 
-    fn get_outward_streams(&self, _iotype: IOType, _is_server: bool) -> Vec<NetStream> {
-        vec![]
+    fn get_outward_streams(&self, iotype: IOType, is_server: bool) -> Vec<NetStream> {
+        // Only look at stdin streams; output MUST be a file on the same machine.
+        let streams: Vec<DashStream> = match iotype {
+            IOType::Stdin => self
+                .stdin
+                .clone()
+                .iter()
+                .filter(|&s| stream_initiate_filter(s.clone(), self.node_id, is_server))
+                .cloned()
+                .collect(),
+            _ => Vec::new(),
+        };
+        streams
+            .iter()
+            .map(|s| {
+                let netstream_result: Option<NetStream> = s.clone().into();
+                netstream_result.unwrap()
+            })
+            .collect()
     }
 }
 
@@ -276,8 +296,8 @@ impl Execute for WriteNode {
                 drop(f);
             }
             DashStream::Fifo(fifostream) => {
-                let f = fifostream.open()?;
-                drop(f);
+                // first, create the fifo
+                fifostream.create()?;
             }
             _ => {}
         }
@@ -352,11 +372,12 @@ impl Execute for WriteNode {
                             }
                         }
                         false => {
-                            let mut handle = pipes.remove(&HandleIdentifier::new(
+                            let identifier = HandleIdentifier::new(
                                 self.prog_id,
                                 pipestream.get_left(),
                                 pipestream.get_output_type(),
-                            ))?;
+                            );
+                            let mut handle = pipes.remove(&identifier)?;
                             match &self.output {
                                 DashStream::File(filestream) => {
                                     let mut f = filestream.open_with_append()?;
