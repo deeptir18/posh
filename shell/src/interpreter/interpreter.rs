@@ -258,10 +258,10 @@ impl Interpreter {
         matches: &mut HashMap<NodeId, ArgMatch>,
         assignments: HashMap<NodeId, Location>,
     ) -> Result<()> {
-        for (id, loc) in assignments {
-            match prog.get_mut_node(id) {
+        for (id, loc) in assignments.iter() {
+            match prog.get_mut_node(*id) {
                 Some(ref mut node) => {
-                    node.set_loc(loc);
+                    node.set_loc(loc.clone());
                 }
                 None => {
                     bail!("Assignment map refers to node {:?} not in program", id);
@@ -316,11 +316,10 @@ impl Interpreter {
         // ensures all necessary pipestreams are converted to tcpstreams
         prog.make_pipes_networked()?;
 
-        // TODO: for any read nodes -> pipes -> cmdnodes scheduled on same machine,
-        // remove readnode and have cmdnode access the file directly
+        // TODO: mark things as bufferable
+
         let mut readmap: HashMap<PipeStream, FileStream> = HashMap::new();
-        for id in prog.get_nodes_iter() {
-            let node = prog.get_node(&id).unwrap();
+        for (_id, node) in prog.get_nodes_iter() {
             match node.get_elem() {
                 Elem::Read(readnode) => {
                     if let Some(output) = readnode.get_stdout() {
@@ -343,7 +342,7 @@ impl Interpreter {
         }
         for (ps, fs) in readmap.iter() {
             // remove readnode
-            prog.remove_node(ps.get_left());
+            prog.remove_node(ps.get_left())?;
             // replace stdin of right side of pipe with Dash filestream instead
             prog.replace_input_pipe(ps.get_left(), &ps, fs.clone())?;
         }
