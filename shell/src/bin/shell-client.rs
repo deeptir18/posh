@@ -68,7 +68,7 @@ fn main() {
             process::exit(exitcode::USAGE);
         }
     };
-    let mut client = match client::ShellClient::new(&runtime_port, &mount_file, pwd, &tmp_file) {
+    let mut client = match client::ShellClient::new(&runtime_port, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
             error!(

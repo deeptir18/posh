@@ -9,7 +9,7 @@ use nom::*;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::path::{Path, PathBuf};
-use std::str::{from_utf8, FromStr};
+use std::str::from_utf8;
 use yaml_rust::YamlLoader;
 named_complete!(
     parse_client<Location>,
@@ -18,34 +18,30 @@ named_complete!(
 
 named_complete!(
     parse_server<Location>,
-    map!(rest, |n: CompleteByteSlice| {
-        Location::Server(from_utf8(n.0).unwrap().to_string())
+    map!(many1!(alt!(digit | tag!("."))), |elts: Vec<
+        CompleteByteSlice,
+    >| {
+        let mut name = "".to_string();
+        for elt in elts.iter() {
+            let str_repr = from_utf8(elt.0).unwrap();
+            name.push_str(str_repr);
+        }
+        Location::Server(name)
     })
+);
+named_complete!(
+    parse_pair<(Location, Location)>,
+    do_parse!(
+        first_loc: alt!(parse_client | parse_server)
+            >> tag!(",")
+            >> second_loc: alt!(parse_client | parse_server)
+            >> (first_loc, second_loc)
+    )
 );
 
 named_complete!(
-    parse_link_info<((Location, Location), u32)>,
-    do_parse!(
-        first_ip:
-            delimited!(
-                tag!("("),
-                alt!(parse_client | parse_server),
-                opt!(tag!(","))
-            )
-            >> second_ip:
-                delimited!(
-                    opt!(tag!(",")),
-                    alt!(parse_client | parse_server),
-                    tag!(")")
-                )
-            >> tag!(":")
-            >> speed: map!(rest, |n: CompleteByteSlice| {
-                let strval = from_utf8(n.0).unwrap();
-                let value = FromStr::from_str(strval).unwrap();
-                value
-            })
-            >> ((first_ip, second_ip), speed)
-    )
+    parse_link_key<(Location, Location)>,
+    delimited!(tag!("("), parse_pair, tag!(")"))
 );
 
 pub struct FileNetwork {
@@ -88,13 +84,12 @@ impl FileNetwork {
             }
         };
         let yaml = &yamls[0];
-
         match yaml["mounts"].as_hash() {
             Some(map) => {
                 for (key, value) in map.iter() {
-                    let mount = Path::new(&key.as_str().unwrap()).to_path_buf();
+                    let mount = Path::new(&value.as_str().unwrap()).to_path_buf();
                     let ip = ServerKey {
-                        ip: value.as_str().unwrap().to_string(),
+                        ip: key.as_str().unwrap().to_string(),
                     };
                     path_to_addr.insert(mount, ip);
                 }
@@ -104,12 +99,15 @@ impl FileNetwork {
             }
         }
 
-        match yaml["links"].as_vec() {
-            Some(arr) => {
-                for line in arr.iter() {
-                    let bytes = line.as_str().unwrap().as_bytes();
-                    let (key, val) = parse_link_info(CompleteByteSlice(bytes)).unwrap().1;
-                    links.insert(key, val);
+        match yaml["links"].as_hash() {
+            Some(map) => {
+                for (key, value) in map.iter() {
+                    let link_key =
+                        parse_link_key(CompleteByteSlice(key.as_str().unwrap().as_bytes()))
+                            .unwrap()
+                            .1;
+                    let speed: u32 = value.as_i64().unwrap() as u32;
+                    links.insert(link_key, speed);
                 }
             }
             None => {
@@ -142,7 +140,6 @@ impl FileNetwork {
             .map(|(_mt, server)| Location::Server(server.ip.clone()))
             .collect();
         servers.push(Location::Client);
-
         Ok(FileNetwork {
             path_to_addr: path_to_addr,
             server_info: server_info,

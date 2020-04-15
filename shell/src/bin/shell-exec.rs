@@ -6,7 +6,8 @@ use dash::graph::program;
 use dash::runtime::new_client as client;
 use dash::util::Result;
 use failure::bail;
-use shell::annotations::interpreter;
+use shell::interpreter::interpreter;
+use shell::scheduler::dp::DPScheduler;
 use std::env::current_dir;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -93,19 +94,19 @@ fn main() {
         pwd = Path::new(&given_pwd).to_path_buf();
     }
 
-    let mut client =
-        match client::ShellClient::new(&runtime_port, &mount_info, pwd.clone(), &tmp_file) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(
-                    "Failed to construct a shell with the given mount file: {:?}",
-                    e
-                );
-                exit(exitcode::USAGE);
-            }
-        };
+    let mut client = match client::ShellClient::new(&runtime_port, pwd.clone(), &tmp_file) {
+        Ok(s) => s,
+        Err(e) => {
+            error!("Failed to construct a shell with the given params: {:?}", e);
+            exit(exitcode::USAGE);
+        }
+    };
 
-    let mut interpreter = match interpreter::Interpreter::new(&annotation_file, &mount_info) {
+    let mut interpreter = match interpreter::Interpreter::new(
+        &mount_info,
+        &annotation_file,
+        Box::new(DPScheduler {}),
+    ) {
         Ok(i) => i,
         Err(e) => {
             error!(
@@ -158,7 +159,7 @@ fn run_cmd(
         true => return Ok(()),
         false => {}
     }
-    let dag = match interpreter.parse(&cmd) {
+    let dag = match interpreter.parse_command_line(&cmd) {
         Ok(d) => match d {
             Some(graph) => graph,
             None => {

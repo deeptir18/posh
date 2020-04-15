@@ -70,7 +70,7 @@ fn main() {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
 
-    let mut client = match client::ShellClient::new(&runtime_port, &mount_info, pwd, &tmp_file) {
+    let mut client = match client::ShellClient::new(&runtime_port, pwd, &tmp_file) {
         Ok(s) => s,
         Err(e) => {
             error!(
