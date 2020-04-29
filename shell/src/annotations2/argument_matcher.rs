@@ -21,6 +21,7 @@ fn glob_wrapper(input: &FileStream) -> Option<Vec<NodeArg>> {
             return None;
         }
     };
+    tracing::debug!("Calling glob on {:?}", input_str);
     match glob(input_str) {
         Ok(list) => {
             // TODO: unwrap here is not the best way to do this

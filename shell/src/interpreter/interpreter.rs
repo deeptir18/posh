@@ -111,7 +111,6 @@ impl Interpreter {
         self.parallelize_program(program, &mut match_map)?;
 
         debug!("Finished parallelization");
-        tracing::debug!("Program before scheduling: {:?}", program);
         // run scheduler
         let location_assignment = self.scheduler.schedule(
             program,
@@ -240,9 +239,9 @@ impl Interpreter {
                 Elem::Cmd(_) => {
                     // resolve all environment variables in associated arg match object
                     let arg_match = match_map.get_mut(&id).unwrap();
+                    arg_match.resolve_file_paths(&mut self.filecache, &self.pwd.as_path())?;
                     arg_match.resolve_glob()?;
                     arg_match.resolve_env_vars()?;
-                    arg_match.resolve_file_paths(&mut self.filecache, &self.pwd.as_path())?;
                 }
             }
         }

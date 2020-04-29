@@ -182,7 +182,18 @@ fn backtrack(prog: &Program, config: &FileNetwork, dp: &mut DP) -> Result<()> {
         }
         let min_loc = min_loc_opt.unwrap();
         dp.set_min_loc(*sink_id, min_loc.clone(), min_val)?;
+
         // now do the backtracking
+        // if sink is for stderr, ignore while backtracking
+        match prog.get_node(*sink_id).unwrap().get_elem() {
+            Elem::Write(writenode) => match writenode.get_stdout().unwrap() {
+                DashStream::Stderr => {
+                    continue;
+                }
+                _ => {}
+            },
+            _ => {}
+        }
         let mut stack: Vec<NodeId> = Vec::new();
         stack.insert(0, *sink_id);
         while stack.len() > 0 {
@@ -381,14 +392,20 @@ fn calculate_dp(
             }
 
             if argmatch.get_needs_current_dir() {
-                let dir_size = filecache.get_size(pwd.to_path_buf())?;
+                // Querying for filesize can be extremely expensive
+                // Especially for large nested repos (e.g., git)
+                // Instead, assume that the directory size is infinity
+                /*let dir_size = filecache.get_size(pwd.to_path_buf())?;
                 let pwd_location = config.get_path_location(pwd.to_path_buf());
                 let speed = config.network_speed(location, &pwd_location).unwrap_or(0.0);
                 if speed == 0.0 {
                     input_time += INFINITY;
                 } else {
                     input_time += dir_size / speed;
-                }
+                }*/
+                let pwd_location = config.get_path_location(pwd.to_path_buf());
+                let time = constraint(location, &pwd_location)?;
+                input_time += time;
             }
 
             // calculate sum of transferring previous nodes
