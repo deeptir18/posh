@@ -6,23 +6,18 @@ The Dash interface assumes that developers provide `annotations` for any program
 `annotations` specify a type assignment between the arguments that follow a program, so Dash can figure out which arguments correspond to files that are remote.
 The Dash crate includes the server program, client program and backend execution engine necessary to execute programs.
 Dash currently supports a shared filesystem interface, where the client and the server see the same view of the filesystem.
+Our work will be published in Usenix ATC 2020.
 
-### ISSUES:
-* Parser
-    * Shell parsing: is it possible to support more complicated shell syntax, such as the true subshell syntax where there is a subshell that executes in its own file descriptor? This might not be
-      super necessary
-    * Annotations: would be nice to specify them via a yaml-like interface, rather than this current list like interface
-    * In the parser, would be nice to abstract out the steps better so the code (especially surrounding the clap based parsing) isn't so repetitive/tricky. Probably just rewrite/cleanup this entire
-      thing.
-    * Make it easier to experiment with schedulers -- and schedulers that depend on knowledge such as link knowledge between the various machines (is this even possible?)
-* Execution engine
-    * Loop where there are multiple streams inputting to a node is extremely badly implemented currently -> need to make this truly asychronous somehow, but with the child processes running in threads
-      as that seems easiest.
-* Experiments/Research
-    * Find more APPLICATIONS. Maybe ideally one that involves cloud to cloud communication? Where a job could be distributed among machines in the cloud, to show the power of the scheduler? This could
-      be some sort of sorting application. Also a comp-bio application could be good.
-    * Actually try to write annotations for all of the bash utils.
-    * The current way to set off experiments was sort of annoying for some reason. Make it less annoying
+# configuring dash
+- (_todo_: write more detailed instructions)
+1. Setup client and proxy server access to NFS repo
+2. Sample config provided in `config/sample.config`.
+3. Run Dash server (compiled to `target/release/server`) and Dash client.
 
-    
+# annotations
+- Sample annotations are provided in `config/eval_annotations.txt`.
 
+# integration tests
+- Run `cargo test` to run all integration tests and unit tests, to make sure
+  `stdout` forwarding and various other Dash functionality will work when
+  running Dash.
