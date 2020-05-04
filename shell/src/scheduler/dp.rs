@@ -268,10 +268,27 @@ fn calculate_edge_weights(
             }
         }
 
-        let output_size = match is_filter_node {
+        let mut output_size = match is_filter_node {
             true => input_size / 2.0,
             false => input_size as f64,
         };
+
+        // if this node is a cmdnode, and writes to output files, output edge size is 0
+        // assume all flow is directed to the output file
+        match prog.get_node(*id).unwrap().get_elem() {
+            Elem::Cmd(_cmdnode) => {
+                let argmatch = match_map.get(id).unwrap();
+                for (argtype, _) in argmatch.file_dependencies().iter() {
+                    match argtype {
+                        ArgType::OutputFile => {
+                            output_size = 0.0;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
 
         let outgoing_edges = prog.get_outgoing_edges(*id);
         // right now, nodes can only have up to 2 outgoing edges:

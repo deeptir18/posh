@@ -273,9 +273,29 @@ impl Interpreter {
         for (id, node) in prog.get_mut_nodes_iter() {
             match node.get_loc() {
                 Location::Client => {}
-                Location::Server(_) => match node.get_mut_elem() {
-                    Elem::Cmd(_cmdnode) => {
+                Location::Server(ip) => match node.get_mut_elem() {
+                    Elem::Cmd(cmdnode) => {
                         let argmatch = matches.get_mut(id).unwrap();
+
+                        // if the node requires pwd, assign pwd to the cmdnode itself
+                        if argmatch.get_needs_current_dir() {
+                            let mut fs = FileStream::new(&self.pwd.as_path(), Location::Client);
+                            self.config.strip_file_path(
+                                &mut fs,
+                                &Location::Client,
+                                &Location::Server(ip.clone()),
+                            )?;
+                            tracing::debug!(
+                                "Setting cmdnode {:?} to have pwd of {:?}",
+                                cmdnode,
+                                fs
+                            );
+                            // set options to "needs current dir"
+                            let mut options = cmdnode.get_options();
+                            options.set_needs_current_dir(true);
+                            cmdnode.set_options(options);
+                            cmdnode.set_pwd(&fs.get_path());
+                        }
                         // files to setup for remote access
                         let remote_access = argmatch.strip_file_paths(
                             Location::Client,
