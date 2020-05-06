@@ -722,7 +722,6 @@ impl Program {
             return Ok(vec![]);
         } else {
         }
-
         // create new nodes
         let mut new_node_ids: Vec<NodeId> = Vec::new();
         for _i in 0..stdin.len() {

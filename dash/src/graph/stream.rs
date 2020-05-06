@@ -223,6 +223,20 @@ impl Default for DashStream {
 }
 
 impl DashStream {
+    pub fn set_bufferable(&mut self) -> Result<()> {
+        match self {
+            DashStream::Pipe(ref mut ps) => {
+                ps.set_bufferable();
+            }
+            DashStream::Tcp(ref mut ns) => {
+                ns.set_bufferable();
+            }
+            _ => {
+                bail!("Setting bufferable on non pipe or netstream");
+            }
+        }
+        Ok(())
+    }
     pub fn get_dot_label(&self) -> Result<String> {
         match self {
             DashStream::File(fs) => Ok(fs.get_dot_label()),

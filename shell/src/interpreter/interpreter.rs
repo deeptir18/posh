@@ -7,7 +7,7 @@ use config::network::FileNetwork;
 use dash::graph::filestream::{FifoMode, FifoStream, FileStream};
 use dash::graph::info::Info;
 use dash::graph::program::{Elem, NodeId, Program};
-use dash::graph::stream::{DashStream, PipeStream};
+use dash::graph::stream::{DashStream, IOType, PipeStream};
 use dash::graph::Location;
 use failure::bail;
 use grammar::{AccessType, ArgType};
@@ -156,7 +156,7 @@ impl Interpreter {
             let _ = match_map.remove(&id);
             // add in each part of split argmatch to the overall match map
             for new_id in new_ids.iter() {
-                let argmatch = argmatches.pop().unwrap();
+                let argmatch = argmatches.remove(0);
                 match_map.insert(*new_id, argmatch);
             }
         }
@@ -335,8 +335,6 @@ impl Interpreter {
         // ensures all necessary pipestreams are converted to tcpstreams
         prog.make_pipes_networked()?;
 
-        // TODO: mark things as bufferable
-
         let mut readmap: HashMap<PipeStream, FileStream> = HashMap::new();
         for (_id, node) in prog.get_nodes_iter() {
             match node.get_elem() {
@@ -377,6 +375,85 @@ impl Interpreter {
                 _ => {}
             }
         }
+        self.mark_pipes_bufferable(prog)?;
+        Ok(())
+    }
+
+    /// Mark any pipes where buffering is necessary as bufferable.
+    /// This is all tcp streams and pipes where the pipe feeds into stdin and it is 2nd or later in
+    /// the list.
+    fn mark_pipes_bufferable(&self, prog: &mut Program) -> Result<()> {
+        let mut bufferable_map: HashMap<DashStream, (NodeId, NodeId)> = HashMap::default();
+        for (_id, node) in prog.get_nodes_iter() {
+            let stdin = node.get_stdin();
+            let mut count = 0;
+            for stream in stdin.iter() {
+                match stream {
+                    DashStream::Tcp(netstream) => {
+                        if netstream.get_output_type() != IOType::Stderr {
+                            bufferable_map.insert(
+                                DashStream::Tcp(netstream.clone()),
+                                (netstream.get_left(), netstream.get_right()),
+                            );
+                        }
+                    }
+                    DashStream::Pipe(pipestream) => {
+                        if count >= 1 {
+                            bufferable_map.insert(
+                                DashStream::Pipe(pipestream.clone()),
+                                (pipestream.get_left(), pipestream.get_right()),
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+                count += 1;
+            }
+        }
+        for (_id, node) in prog.get_mut_nodes_iter() {
+            match node.get_mut_elem() {
+                Elem::Cmd(ref mut cmdnode) => {
+                    for stream in cmdnode.get_stdin_iter_mut() {
+                        if bufferable_map.contains_key(&stream) {
+                            stream.set_bufferable()?;
+                        }
+                    }
+                    match cmdnode.get_stdout() {
+                        Some(stream) => {
+                            let mut copy = stream.clone();
+                            if bufferable_map.contains_key(&stream) {
+                                copy.set_bufferable()?;
+                            }
+                            cmdnode.set_stdout(copy.clone())?;
+                        }
+                        None => {}
+                    }
+                    match cmdnode.get_stderr() {
+                        Some(stream) => {
+                            let mut copy = stream.clone();
+                            if bufferable_map.contains_key(&stream) {
+                                copy.set_bufferable()?;
+                            }
+                            cmdnode.set_stderr(copy.clone())?;
+                        }
+                        None => {}
+                    }
+                }
+                Elem::Write(ref mut writenode) => {
+                    for stream in writenode.get_stdin_iter_mut() {
+                        if bufferable_map.contains_key(&stream) {
+                            stream.set_bufferable()?;
+                        }
+                    }
+                }
+                Elem::Read(ref mut readnode) => {
+                    let stream = readnode.get_stdout_mut();
+                    if bufferable_map.contains_key(&stream) {
+                        stream.set_bufferable()?;
+                    }
+                }
+            }
+        }
         Ok(())
     }
 
@@ -389,7 +466,7 @@ impl Interpreter {
     ) -> Result<()> {
         // transfer output file to correct location after job is done
         if remote_access_info.argtype == ArgType::OutputFile {
-            unimplemented!();
+            unimplemented!()
         }
         // transfer input file to correct location before job starts
         if argmatch.get_access_type() != AccessType::Sequential {

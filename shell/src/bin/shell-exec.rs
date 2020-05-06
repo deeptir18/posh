@@ -1,7 +1,6 @@
 extern crate dash;
 extern crate exitcode;
 extern crate shell;
-
 use dash::graph::program;
 use dash::runtime::new_client as client;
 use dash::util::Result;
@@ -15,12 +14,36 @@ use std::path::{Path, PathBuf};
 use std::process::exit;
 use structopt::StructOpt;
 use tracing::{error, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{filter::LevelFilter, FmtSubscriber};
+
+#[derive(Debug)]
+enum TraceLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+    Off,
+}
+
+impl std::str::FromStr for TraceLevel {
+    type Err = failure::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        Ok(match s {
+            "debug" => TraceLevel::Debug,
+            "info" => TraceLevel::Info,
+            "warn" => TraceLevel::Warn,
+            "error" => TraceLevel::Error,
+            "off" => TraceLevel::Off,
+            x => bail!("unknown TRACE level {:?}", x),
+        })
+    }
+}
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "shell_exec", help = "Shell to execute dash binaries")]
-
 struct Opt {
+    #[structopt(short, long)]
+    prep: bool,
     #[structopt(
         short = "run",
         long = "runtime_port",
@@ -61,6 +84,13 @@ struct Opt {
         default_value = "1"
     )]
     splitting_factor: u32,
+    #[structopt(
+        short = "trace",
+        long = "tracing_level",
+        help = "Configure tracing settings.",
+        default_value = "off"
+    )]
+    trace_level: TraceLevel,
 }
 
 fn main() {
@@ -72,14 +102,25 @@ fn main() {
     let given_pwd = opt.pwd;
     let tmp_file = opt.tmp_file;
     let splitting_factor: u32 = opt.splitting_factor;
-
-    // global tracing settings
-    let subscriber = FmtSubscriber::builder()
-        // all spans/events with a level higher than TRACE (e.g, debug, info, warn, etc.)
-        // will be written to stdout.
-        .with_max_level(Level::DEBUG)
-        // completes the builder.
-        .finish();
+    let trace_level = opt.trace_level;
+    let prep = opt.prep;
+    let subscriber = match trace_level {
+        TraceLevel::Debug => FmtSubscriber::builder()
+            .with_max_level(Level::DEBUG)
+            .finish(),
+        TraceLevel::Info => FmtSubscriber::builder()
+            .with_max_level(Level::INFO)
+            .finish(),
+        TraceLevel::Warn => FmtSubscriber::builder()
+            .with_max_level(Level::WARN)
+            .finish(),
+        TraceLevel::Error => FmtSubscriber::builder()
+            .with_max_level(Level::ERROR)
+            .finish(),
+        TraceLevel::Off => FmtSubscriber::builder()
+            .with_max_level(LevelFilter::OFF)
+            .finish(),
+    };
     tracing::subscriber::set_global_default(subscriber).expect("setting defualt subscriber failed");
     let mut pwd = match current_dir() {
         Ok(p) => p,
@@ -139,7 +180,7 @@ fn main() {
             }
         };
 
-        match run_cmd(&line, &mut interpreter, &mut client) {
+        match run_cmd(&line, &mut interpreter, &mut client, prep) {
             Ok(_) => {}
             Err(e) => {
                 error!("Failed to run line: {:?} with err {:?}", &line, e);
@@ -153,6 +194,7 @@ fn run_cmd(
     cmd: &str,
     interpreter: &mut interpreter::Interpreter,
     client: &mut client::ShellClient,
+    prep: bool,
 ) -> Result<()> {
     let pwd = current_dir()?;
     // if the line begins with a comment, just return
@@ -172,6 +214,10 @@ fn run_cmd(
         }
     };
     interpreter.set_pwd(pwd.clone());
+    // just run the scheduling phases of this pipeline
+    if prep {
+        return Ok(());
+    }
     run_program(dag, client, pwd.clone())?;
     Ok(())
 }
