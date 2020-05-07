@@ -160,6 +160,8 @@ fn main() {
     };
     interpreter.set_pwd(pwd.clone());
     interpreter.set_splitting_factor(splitting_factor);
+    // use more advanced file size query-er
+    interpreter.set_offload_filecache(client.clone());
 
     // loop over the binary, and execute all of the commands
     let file = match File::open(binary) {
@@ -202,6 +204,7 @@ fn run_cmd(
         true => return Ok(()),
         false => {}
     }
+    tracing::info!("Scheduling {:?}", cmd);
     let dag = match interpreter.parse_command_line(&cmd) {
         Ok(d) => match d {
             Some(graph) => graph,

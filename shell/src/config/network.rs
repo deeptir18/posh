@@ -44,6 +44,7 @@ named_complete!(
     delimited!(tag!("("), parse_pair, tag!(")"))
 );
 
+#[derive(PartialEq, Debug, Clone, Eq, Default)]
 pub struct FileNetwork {
     /// map of local mounted paths to IP addresses
     path_to_addr: HashMap<PathBuf, ServerKey>,
@@ -193,6 +194,17 @@ impl FileNetwork {
     /// Queries for where a certain file lives (origin filesystem).
     pub fn get_location(&self, filestream: &FileStream) -> Location {
         self.get_path_location(filestream.get_path())
+    }
+
+    pub fn stripped_path(
+        &self,
+        path: &Path,
+        origin_location: &Location,
+        new_location: &Location,
+    ) -> Result<PathBuf> {
+        let mut fs = FileStream::new(path, origin_location.clone());
+        self.strip_file_path(&mut fs, origin_location, new_location)?;
+        Ok(fs.get_path())
     }
 
     /// Strips the filestream of the correct path when serialized.

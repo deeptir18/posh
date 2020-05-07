@@ -12,7 +12,8 @@ use dash::util::Result;
 use failure::bail;
 use std::collections::HashMap;
 use std::f64::INFINITY;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 type NodeAssignment = (NodeId, Location);
 #[derive(PartialEq, Debug, Clone, Default)]
@@ -100,14 +101,17 @@ impl Scheduler for DPScheduler {
     ) -> Result<HashMap<NodeId, Location>> {
         let mut assignments: HashMap<NodeId, Location> = HashMap::new();
         // iterate through each node to cache input file sizes
+        let start = Instant::now();
+        let mut query_paths: Vec<PathBuf> = Vec::new();
         for (id, node) in prog.get_nodes_iter() {
             match node.get_elem() {
                 Elem::Cmd(_cmdnode) => {
                     let argmatch = match_map.get(id).unwrap();
+                    // query for all of the file locations at once, at the server
                     for (argtype, fs) in argmatch.file_dependencies().iter() {
                         match argtype {
                             ArgType::InputFile => {
-                                let _ = filecache.get_size(fs.get_path())?;
+                                query_paths.push(fs.get_path());
                             }
                             _ => {}
                         }
@@ -116,6 +120,12 @@ impl Scheduler for DPScheduler {
                 _ => {}
             }
         }
+        // query for file sizes
+        filecache.get_sizes(&query_paths)?;
+        tracing::error!(
+            "Took {:?} to get all necessary filepaths",
+            start.elapsed().as_secs()
+        );
         // estimate weights of each edge
         let edge_weights = calculate_edge_weights(prog, match_map, filecache)?;
 

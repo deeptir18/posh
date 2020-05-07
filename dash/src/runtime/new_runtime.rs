@@ -1,4 +1,5 @@
-use super::graph::{program, stream, Location};
+extern crate walkdir;
+use super::graph::{filestream::FileStream, program, stream, Location};
 use super::runtime_util::{new_server, Addr, Server};
 use super::serialize::{read_msg_and_type, rpc, write_msg_and_type};
 use super::Result;
@@ -6,9 +7,11 @@ use bincode::{deserialize, serialize};
 use failure::bail;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::{fs, thread};
 use stream::SharedStreamMap;
 use tracing::{debug, error, info};
+use walkdir::WalkDir;
 /// matches client IP to folder name
 pub type ClientMap = HashMap<IpAddr, String>;
 
@@ -255,6 +258,63 @@ fn handle_spawned_client(
             // send a success message back to the sender saying this stream was inserted
             let response = serialize(&rpc::ClientReturnCode::Success)?;
             write_msg_and_type(response.to_vec(), rpc::MessageType::Control, &mut stream)?;
+            Ok(())
+        }
+        rpc::MessageType::SizeRequest => {
+            let mut size_request: rpc::SizeRequest = match deserialize(&buf[..]) {
+                Ok(info) => info,
+                Err(e) => {
+                    let response = serialize(&rpc::SizeRequest {
+                        files: vec![],
+                        sizes: vec![],
+                        failed: true,
+                    })?;
+                    write_msg_and_type(
+                        response.to_vec(),
+                        rpc::MessageType::SizeRequest,
+                        &mut stream,
+                    )?;
+                    bail!("Could not deserialize stream info: {:?}", e)
+                }
+            };
+
+            // need to resolve and query each path
+            // filestream.prepend_directory(parent_dir); -> where parent_dir is folder
+            let mut sizes: Vec<(PathBuf, u64)> = Vec::new();
+            for file in size_request.files.iter() {
+                let mut fs = FileStream::new(&file, Location::default());
+                fs.prepend_directory(&Path::new(&folder));
+                let resolved = fs.get_path();
+                let size = match resolved.as_path().is_dir() {
+                    false => {
+                        let metadata = resolved.as_path().metadata()?;
+                        metadata.len()
+                    }
+                    true => {
+                        // TODO: actually run du -sh
+                        let total_size = WalkDir::new(resolved.as_path())
+                            .min_depth(1)
+                            .max_depth(10)
+                            .into_iter()
+                            .filter_map(|entry| entry.ok())
+                            .filter_map(|entry| entry.metadata().ok())
+                            .filter(|metadata| metadata.is_file())
+                            .fold(0, |acc, m| acc + m.len());
+                        total_size
+                    }
+                };
+                sizes.push((file.clone(), size));
+            }
+
+            size_request.sizes = sizes;
+            size_request.failed = false;
+            let response = serialize(&size_request)?;
+            write_msg_and_type(
+                response.to_vec(),
+                rpc::MessageType::SizeRequest,
+                &mut stream,
+            )?;
+
             Ok(())
         }
         _ => Ok(()),

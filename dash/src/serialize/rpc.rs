@@ -1,5 +1,6 @@
 use super::{program, stream, Location};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 #[derive(Serialize, Deserialize, PartialEq, Debug, Copy, Clone)]
 pub enum ClientReturnCode {
     Success,
@@ -50,6 +51,16 @@ pub struct NetworkStreamInfo {
 }
 
 #[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
+pub struct SizeRequest {
+    /// (file, is_dir) bools
+    pub files: Vec<PathBuf>,
+    /// sizes of each file (only used in return)
+    pub sizes: Vec<(PathBuf, u64)>,
+    /// did the request fail?
+    pub failed: bool,
+}
+
+#[derive(Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub enum MessageType {
     /// Request to execute a set of nodes
     ProgramExecution,
@@ -59,6 +70,8 @@ pub enum MessageType {
     Control,
     /// Initial control message to setup a stream.
     SetupStreams,
+    /// Request size for files
+    SizeRequest,
 }
 impl MessageType {
     pub fn from_u32(value: u32) -> MessageType {
@@ -67,6 +80,7 @@ impl MessageType {
             2 => MessageType::Pipe,
             3 => MessageType::Control,
             4 => MessageType::SetupStreams,
+            5 => MessageType::SizeRequest,
             _ => panic!("Passing in unknown message type to constructor: {}", value),
         }
     }
@@ -77,6 +91,7 @@ impl MessageType {
             MessageType::Pipe => 2,
             MessageType::Control => 3,
             MessageType::SetupStreams => 4,
+            MessageType::SizeRequest => 5,
         }
     }
 }

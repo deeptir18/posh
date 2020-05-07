@@ -2,13 +2,14 @@ use super::{annotations2, config, scheduler, shellparser, Result};
 use annotations2::{argument_matcher, grammar, parser};
 use argument_matcher::{ArgMatch, RemoteAccessInfo};
 use config::filecache::FileCache;
-use config::filesize::FileSize;
+use config::filesize::{FileSize, OffloadQueryFileSize};
 use config::network::FileNetwork;
 use dash::graph::filestream::{FifoMode, FifoStream, FileStream};
 use dash::graph::info::Info;
 use dash::graph::program::{Elem, NodeId, Program};
 use dash::graph::stream::{DashStream, IOType, PipeStream};
 use dash::graph::Location;
+use dash::runtime::new_client::ShellClient;
 use failure::bail;
 use grammar::{AccessType, ArgType};
 use parser::Parser;
@@ -55,6 +56,12 @@ impl Interpreter {
             pwd: Default::default(),
             env: Default::default(),
         })
+    }
+
+    /// Interpreter will push file size requests to proxy servers.
+    pub fn set_offload_filecache(&mut self, shell_client: ShellClient) {
+        let filesizemod = Box::new(OffloadQueryFileSize::new(shell_client, self.config.clone()));
+        self.filecache = FileCache::new(filesizemod);
     }
 
     pub fn construct(

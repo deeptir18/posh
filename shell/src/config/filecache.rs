@@ -39,6 +39,13 @@ impl FileCache {
             ..Default::default()
         }
     }
+    pub fn get_sizes(&mut self, paths: &Vec<PathBuf>) -> Result<()> {
+        let sizes = self.file_size_module.query_file_list(paths)?;
+        for (path, size) in sizes {
+            self.size_map.insert(path, size as u64);
+        }
+        Ok(())
+    }
     /// Used to resolve the size of a path.
     pub fn get_size(&mut self, path: PathBuf) -> Result<f64> {
         match self.size_map.get(&path) {
@@ -56,6 +63,11 @@ impl FileCache {
         self.size_map.insert(path, size);
         Ok(size as f64)
     }
+
+    pub fn set_size(&mut self, path: &Path, size: u64) {
+        self.size_map.insert(path.to_path_buf(), size as u64);
+    }
+
     pub fn resolve_path(&mut self, filestream: &mut FileStream, pwd: &Path) -> Result<()> {
         if filestream.is_absolute() {
             return Ok(());

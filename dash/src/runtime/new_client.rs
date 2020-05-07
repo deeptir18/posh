@@ -142,6 +142,67 @@ impl ShellClient {
         self.send_program(&mut program_map, &mut shared_map)?;
         Ok(())
     }
+
+    /// Asks servers to stat given files.
+    pub fn stat_files(
+        &self,
+        requests: HashMap<Location, Vec<PathBuf>>,
+    ) -> Result<HashMap<Location, rpc::SizeRequest>> {
+        let mut results: HashMap<Location, rpc::SizeRequest> = HashMap::default();
+        // for each location, spawn a thread that handles requesting the sizes for those paths
+        let mut size_threads: Vec<JoinHandle<Result<(Location, rpc::SizeRequest)>>> = Vec::new();
+
+        for (location, paths) in requests.iter() {
+            let size_request = rpc::SizeRequest {
+                files: paths.clone(),
+                sizes: vec![],
+                failed: false,
+            };
+            let loc_clone = location.clone();
+            let port_clone = self.port.clone();
+            size_threads.push(thread::spawn(move || {
+                tracing::debug!("size request thread to {:?}", loc_clone);
+                let ip = match loc_clone.clone() {
+                    Location::Client => {
+                        bail!("Should not be sending size req to client");
+                    }
+                    Location::Server(ip) => ip,
+                };
+                let addr = Addr::new(&ip, &port_clone).get_addr();
+                let mut stream = TcpStream::connect(addr)?;
+                let message = serialize(&size_request)?;
+                write_msg_and_type(message.to_vec(), rpc::MessageType::SizeRequest, &mut stream)?;
+                let (_, next_msg) = read_msg_and_type(&mut stream)?;
+                let msg: rpc::SizeRequest = deserialize(&next_msg[..])?;
+                if msg.failed {
+                    bail!(
+                        "Size req for {:?}, paths {:?} failed",
+                        loc_clone,
+                        size_request
+                    );
+                }
+                Ok((loc_clone, msg))
+            }));
+        }
+
+        for handle in size_threads {
+            match handle.join() {
+                Ok(val) => match val {
+                    Ok((loc, size_req)) => {
+                        results.insert(loc, size_req);
+                    }
+                    Err(e) => {
+                        bail!("Thread failed to join size request with err {:?}", e);
+                    }
+                },
+                Err(e) => {
+                    bail!("Querying for size thread failed to join with err {:?}", e);
+                }
+            }
+        }
+
+        Ok(results)
+    }
 }
 
 /// Makes open stream requests
