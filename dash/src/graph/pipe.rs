@@ -4,7 +4,7 @@ use super::Result;
 use super::SharedMap;
 use crossbeam::channel::{bounded, select, Receiver, Sender};
 use failure::bail;
-use std::fs::{File, OpenOptions};
+use std::fs::{remove_file, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -137,6 +137,11 @@ impl BufferedPipe {
                 bail!("Cannot call set_write_done with a receiver channel; should only have a writer channel")
             }
         }
+    }
+
+    pub fn drop_file(&mut self) -> Result<()> {
+        remove_file(self.filepath.as_path())?;
+        Ok(())
     }
 }
 

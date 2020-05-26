@@ -944,6 +944,7 @@ fn redirect_stdin(
                         channel_end,
                     )?;
                     copy(&mut buffered_pipe, &mut stdin)?;
+                    buffered_pipe.drop_file()?;
                 } else {
                     // just copy from the process directly as normal
                     let handle_identifier = HandleIdentifier::new(
@@ -1020,6 +1021,7 @@ fn redirect_output(
                 // spawn the copy into tcp connection thread
                 let send_thread: JoinHandle<Result<()>> = spawn(move || {
                     copy(&mut right_pipe, &mut tcp_stream)?;
+                    right_pipe.drop_file()?;
                     Ok(())
                 });
 

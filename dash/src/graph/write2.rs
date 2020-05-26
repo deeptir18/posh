@@ -370,6 +370,7 @@ impl Execute for WriteNode {
                                     );
                                 }
                             }
+                            handle.drop_file()?;
                         }
                         false => {
                             let identifier = HandleIdentifier::new(

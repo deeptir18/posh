@@ -300,6 +300,7 @@ pub fn execute_subprogram(
     port: String,
     tmp_folder: String,
 ) -> Result<()> {
+    tracing::warn!("Sending program {:?} to loc {:?} for execution", prog, loc);
     match loc {
         Location::Client => {
             // execute the subprogram

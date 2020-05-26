@@ -6,7 +6,7 @@ use dash::runtime::new_client as client;
 use dash::util::Result;
 use failure::bail;
 use shell::interpreter::interpreter;
-use shell::scheduler::dp::DPScheduler;
+use shell::scheduler::heuristic::HeuristicScheduler;
 use std::env::current_dir;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -145,7 +145,7 @@ fn main() {
     let mut interpreter = match interpreter::Interpreter::new(
         &mount_info,
         &annotation_file,
-        Box::new(DPScheduler {}),
+        Box::new(HeuristicScheduler {}),
     ) {
         Ok(i) => i,
         Err(e) => {

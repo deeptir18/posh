@@ -1726,7 +1726,6 @@ impl Program {
             count += 1;
         }
         tracing::debug!("joined all the threads");
-
         Ok(())
     }
 
