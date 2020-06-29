@@ -7,7 +7,7 @@ The Posh crate includes the server program, client program and backend execution
 Posh currently supports a shared filesystem interface, where the client and the server see the same view of the filesystem.
 Our work will appear at Usenix ATC 2020.
 
-# configuring dash
+# configuring posh
 - (_todo_: write more detailed instructions)
 1. Setup client and proxy server access to NFS repo
 2. Sample config provided in `config/sample.config`.
