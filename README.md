@@ -1,5 +1,5 @@
 # posh
-Posh, the ``Process Offload Shell'' is a `smart` shell and runtime that reduces data movement when running shell pipelines on data stored in remote storage, such as NFS. It determines parts of pipelines (individual commands) that can be offloaded to proxy servers (that have access to the same data).
+Posh, the "Process Offload Shell'" is a `smart` shell and runtime that reduces data movement when running shell pipelines on data stored in remote storage, such as NFS. It determines parts of pipelines (individual commands) that can be offloaded to proxy servers (that have access to the same data).
 Posh does this without requiring changes to _either_ the shell pipeline or the individual binaries for the individual commands (e.g. cat or grep).
 The Posh interface assumes that developers provide `annotations` for any programs that can be offloaded to the server.
 `annotations` specify a type assignment between the arguments that follow a program, so Posh can figure out which arguments correspond to files that are remote.
