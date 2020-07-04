@@ -86,7 +86,7 @@ impl Server for ServerRuntime {
         unimplemented!();
     }
 
-    fn handle_incoming(&mut self) -> Result<!> {
+    fn handle_incoming(&mut self) -> Result<()> {
         let clone = self.get_clone()?;
         for stream in clone.incoming() {
             match stream {

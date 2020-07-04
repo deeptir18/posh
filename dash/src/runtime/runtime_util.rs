@@ -54,7 +54,7 @@ pub fn new_addr(server_addr: &str, server_port: &str) -> String {
 }
 
 pub trait Server {
-    fn handle_incoming(&mut self) -> Result<!>;
+    fn handle_incoming(&mut self) -> Result<()>;
 
     fn server_name(&self) -> String;
 
