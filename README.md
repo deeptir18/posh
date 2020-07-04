@@ -82,7 +82,12 @@ $POSH_DIR/target/release/shell-client
     --splitting_factor <splitting factor> # parallelization factor, default = 1
     --tracing_level <tracing_level> # log debug outpu†, default = none
 ```
-
+- Syntax allowed:
+    - Posh can accelerate commands with standard shell syntax, including pipes
+      (`|`), and `stdin`, `stdout` and `stderr` redirections (`<`, `>`, `2>`)
+    - Posh allows export commands (e.g. `export VAR=VALUE`) to configure
+      environment variables within scripts
+    - We are working on including more standard syntax.
 ### Client configuration file
 
 ## Annotations
