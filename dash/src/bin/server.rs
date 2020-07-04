@@ -23,7 +23,7 @@ struct Opt {
         help = "Path to for this client's shared folder on the server."
     )]
     client_folder: String,
-    #[structopt(short = "run", long = "runtime_port", default_value = "1234")]
+    #[structopt(short = "run", long = "runtime_port", default_value = "1235")]
     runtime_port: String,
     #[structopt(short = "debug", long = "debug")]
     debug: bool,

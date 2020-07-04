@@ -11,7 +11,7 @@ This implementation is a research prototype -- use at your own risk!
 Coming soon!
 
 ## Dependencies
-1. The latest version of Rust. See [this link] (https://www.rust-lang.org/tools/install) for installation details.
+1. The latest version of Rust. See [this link](https://www.rust-lang.org/tools/install) for installation details.
 
 ## Building Posh
 0. Our prototype has been fully tested on Linux (versions 18.04 and 19.10).
