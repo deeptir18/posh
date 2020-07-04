@@ -33,24 +33,55 @@ schedule and execute them across the proxy servers:
     - The second starts a shell prompt and lets user type in individual
       commands.
 
+### General setup.
+- The client and server must communicate over a custom port, which can be
+configured in both the server and client binaries; the default is 1235. The
+server must keep this port open for TCP traffic.
+- The client and server binaries require a directory to store temporary output
+  while processes are running.
+
 ### Posh proxy server program
-1. Currently, a proxy server must have access to _one remote folder_ on behalf
+1. A proxy server must have access to _one remote folder_ on behalf
    of a client. The proxy server could be a remote storage server itself (store this data
    locally) or even access this data over NFS or another remote filesystem
    protocol.
    Run the following at the proxy server:
 ```bash
 $POSH_DIR/target/release/server 
-    --folder <client_folder> # folder this Proxy provides access to
-    --ip_address <ip_addr> # ip address of the client
-    --runtime_port <runtime_port> # port server has open for all Posh
-    communication
-    --tmpfile <path/to/temporary/directory> # place for Posh to keep temporary
-    output while running commands
+    --folder <client_folder> # folder this Proxy provides access to, required
+    --ip_address <ip_addr> # ip address of the client, required
+    --runtime_port <runtime_port> # port server has open for all Posh communication, default = 1235
+    --tmpfile <path/to/temporary/directory> # place for Posh to keep temporary output while running commands, required
 ```
 
 ### Posh client program
-2. Sample config provided in `config/sample.config`.
+2. The Posh client shell requires an [_annotations
+   file_](https://github.com/deeptir18/posh#annotations) and a [_configuration file_](https://github.com/deeptir18/posh#client-configuration-file) to understand and schedule shell commands.
+   Each section, linked contains further information about the information these
+   files much contain.
+- To run the shell script binary, run:
+```bash
+$POSH_DIR/target/release/shell-exec
+    <binary> # shell script to run over Posh, required
+    --annotations_file <path> # path to annotations, required
+    --mount_file <path> # path to config file, required
+    --pwd <directory> # directory to execute this script from, required
+    --tmpfile <path/to/temporary/directory> # place for Posh to keep temporary output while running commands, required
+    --runtime_port <runtime_port> # port to communicate with server with, default = 1235
+    --splitting_factor <splitting factor> # parallelization factor, default = 1
+    --tracing_level <tracing_level> # log debug outpu†, default = none
+```
+- To run the shell prompt binary, run:
+```bash
+$POSH_DIR/target/release/shell-client
+    --annotations_file <path> # path to annotations, required
+    --mount_file <path> # path to config file, required
+    --pwd <directory> # directory to execute this script from, required
+    --tmpfile <path/to/temporary/directory> # place for Posh to keep temporary output while running commands, required
+    --runtime_port <runtime_port> # port to communicate with server with, default = 1235
+    --splitting_factor <splitting factor> # parallelization factor, default = 1
+    --tracing_level <tracing_level> # log debug outpu†, default = none
+```
 
 ### Client configuration file
 
