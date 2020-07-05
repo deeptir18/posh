@@ -5,14 +5,14 @@ Annotations summarize the command line semantics of each
 individual command (`awk`, `tar`, `cat`, `grep`) so, from an arbitrary
 pipeline (one or more of these commands with standard shell syntax).
 
-# Contents:
+# Contents
 [Motivation](##Motivation)
 
 [Interface](##Interface)
 
 [Examples](##Examples)
 
-[Using the annotations](##Using the Annotations)
+[Using the annotations](##Using the annotations)
 
 ## Motivation
 Consider a simple pipeline:
@@ -87,7 +87,7 @@ cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]
 tar: FLAGS:[(short:c),(short:z)] OPTPARAMS:[(short:f,type:output_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
 git status[needs_current_dir]: OPTPARAMS:[(short:C,size:1,type:input_file)]
 ```
-See [this file](config/eval_annotations.txt) for more examples.'
+See [this file](config/eval_annotations.txt) for more examples.
 Note that the annotations need not contain an *exhaustive list* of arguments
 that the command can take; Posh will only try to parse a command if it has
 information about all the arguments used in the invocation.
