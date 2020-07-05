@@ -88,14 +88,38 @@ $POSH_DIR/target/release/shell-client
     - Posh allows export commands (e.g. `export VAR=VALUE`) to configure
       environment variables within scripts
     - We are working on including more standard syntax.
+
 ### Client configuration file
+- A sample config file is provided in [`config/sample.config`](config/sample.config). To use Posh, edit the lines under `mounts` with your configuration information.
+- The config file has up to 3 parts. # 1 is required, while 2 and 3 are
+  only necessary for experimental features.
+    1. **[Required]** A list of `mounts`, e.g. a list of IPs for proxy servers mapped to the
+       corresponding client remote mounted directory, which must be an absolute
+       path, for example:
+          ```yaml
+            mounts:
+                "255.255.255.0": "/home/user/remote_mount1"
+                "255.255.255.1": "/home/user/remote_mount2"
+          ```
+    2. [Optional] A list of rough link speeds between different proxies, where the `client` is included as a local proxy. This is used for an experimental scheduling algorithm. For example:
+          ```yaml
+            links:
+                "(255.255.255.0,client)": 500 # in Mbps
+                "(255.255.255.1,client)": 500 # in Mbps
+            ```
+    3. [Optional] A list of temporary file locations on each proxy server
+       that Posh can write to.
+        ```yaml
+        tmp_directory:
+                "255.255.255.1": "/tmp/posh"
+        ```
 
 ## Annotations
 - Sample annotations are provided in [`config/eval_annotations.txt`](config/eval_annotations.txt)
-- See [annotations.md](annotations.md) for more information on the annotation
+- See [ANNOTATIONS.md](ANNOTATIONS.md) for more information on the annotation
   format and adding your own annotations.
 
-## End to end deployment example
+## Example usage
 Here, we'll describe the end to end steps for running a program over Posh, for a
 simple pipeline that runs `cat` of files from two different NFS mounts, and
 pipes the output to `grep`.
