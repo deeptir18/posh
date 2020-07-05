@@ -12,6 +12,8 @@ pipeline (one or more of these commands with standard shell syntax).
 
 [Examples](##Examples)
 
+[Using the annotations](##Using the Annotations)
+
 ## Motivation
 Consider a simple pipeline:
 ```bash
@@ -42,6 +44,7 @@ annotation contains the following information:
       parameters preceeded by options)
     - `type`: `input_file`, `output_file`, `str`
     - `size`: `1`, `specific_size(x)`, `list` (variable size)
+        - If list, specify a `list_separator` for the list (usually a space)
     - If the argument is `splittable`: if the command can be split in a
       data-parallel way across this argument. This is only allowed for up to a
       single argument
@@ -55,6 +58,46 @@ annotation contains the following information:
     - `long_args_single_dash`: Most programs use doubledashes before long arguments (`--debug`), but some programs require long arguments be preceded by a singledash. (e.g.`-debug`)
 
 ## Examples
-foo
-bar
+The Posh parser understands annotation if the information above is
+specified in a single line.
+The current syntax for specifying this models the following:
+```bash
+command_name[needs_current_dir,filters_input]: FLAGS:[(arg0),(arg1)...] OPTPARAMS:[(),()...] PARAMS:[()...]
+```
+1. First, the command's name is listed at the beginning followed by one or more
+   keywords pertaining to metadata about the entire command, which are comma
+   separated
+    - `grep[filters_input]:`
+2. Then, there is a list of `PARAMS`, `OPTPARAMS`, and FLAGS`
+3. Each argument type is followed by a list of the arguments that fall under
+   that category, separated by parentheses and comma, like the following:
+    - `FLAGS:[(arg0)]`
+    - `PARAMS:[(arg1),(arg2)]`
+    - `OPTPARAMS:[(arg3),]`
+4. The information about each argument specifies the information about that
+   argument. From #3, `arg0` might actually look like:
+    - `(short:d,long:debug) # for a flag`
+    - `(short:f,long:file,size:1,type:input_file) # for an optparam`
+    - `(type:input_file,size:list(list_separator( )) # for a param`
+
+
+Putting this together, here are some examples:
+```bash
+cat: PARAMS:[(type:input_file,size:list(list_separator:( ))),]
+tar: FLAGS:[(short:c),(short:z)] OPTPARAMS:[(short:f,type:output_file,size:1)] PARAMS:[(type:input_file,size:list(list_separator:( )))]
+git status[needs_current_dir]: OPTPARAMS:[(short:C,size:1,type:input_file)]
+```
+See [this file](config/eval_annotations.txt) for more examples.'
+Note that the annotations need not contain an *exhaustive list* of arguments
+that the command can take; Posh will only try to parse a command if it has
+information about all the arguments used in the invocation.
+For example, if the user typed in `tar -x`, but there was no annotation for
+`tar` that specified `-x` as a flag, Posh would not try to parse or accelerate
+the command.
+
+## Using the annotations
+- All the annotations must be in a single file
+- On running the Posh client, specify the annotation file as an argument. See
+  the README for more details.
+
 
