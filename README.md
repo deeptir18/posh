@@ -47,7 +47,7 @@ server must keep this port open for TCP traffic.
    protocol.
    Run the following at the proxy server:
 ```bash
-$POSH_DIR/target/release/server 
+$POSH_SRC/target/release/server 
     --folder <client_folder> # folder this Proxy provides access to, required
     --ip_address <ip_addr> # ip address of the client, required
     --runtime_port <runtime_port> # port server has open for all Posh communication, default = 1235
@@ -61,7 +61,7 @@ $POSH_DIR/target/release/server
    files much contain.
 - To run the shell script binary, run:
 ```bash
-$POSH_DIR/target/release/shell-exec
+$POSH_SRC/target/release/shell-exec
     <binary> # shell script to run over Posh, required
     --annotations_file <path> # path to annotations, required
     --mount_file <path> # path to config file, required
@@ -73,10 +73,9 @@ $POSH_DIR/target/release/shell-exec
 ```
 - To run the shell prompt binary, run:
 ```bash
-$POSH_DIR/target/release/shell-client
+$POSH_SRC/target/release/shell-client
     --annotations_file <path> # path to annotations, required
     --mount_file <path> # path to config file, required
-    --pwd <directory> # directory to execute this script from, required
     --tmpfile <path/to/temporary/directory> # place for Posh to keep temporary output while running commands, required
     --runtime_port <runtime_port> # port to communicate with server with, default = 1235
     --splitting_factor <splitting factor> # parallelization factor, default = 1
@@ -122,4 +121,46 @@ $POSH_DIR/target/release/shell-client
 ## Example usage
 Here, we'll describe the end to end steps for running a program over Posh, for a
 simple pipeline that runs `cat` of files from two different NFS mounts, and
-pipes the output to `grep`.
+pipes the output to `grep`. The proxy servers will run on each NFS mount directly.
+
+0. Configure NFS at the client and servers so the two servers expose NFS mounts to the client.
+See [EXPERIMENTS.md](EXPERIMENTS.md) for more details on the NFS setup in our experiments.
+In this example, each NFS servers hosts the shared directory at `/mnt/logs` and the client mounts them at 
+`/home/user/mount1` and `/home/user/mount2` respectively.
+
+1. The data we'll be using is network access logs from the SEC's Edgar log dataset.
+    Download two sample logs, one to each mount, from the edgar log website:
+    ```bash 
+    # (at the first NFS server)
+    wget http://www.sec.gov/dera/data/Public-EDGAR-log-file-data/2017/Qtr1/log20170314.zip 
+    unzip log20170314.zip
+    mv log20170314.csv /mnt/logs/log.csv
+    
+    # (at the second NFS server)
+    wget http://www.sec.gov/dera/data/Public-EDGAR-log-file-data/2017/Qtr1/log20170315.zip 
+    unzip log20170315.zip
+    mv log20170315.csv /mnt/logs/log.csv
+    ```
+
+2. At each of the proxy servers, run the following command (substituting the client IP address):
+```bash
+$POSH_SRC/target/release/server  --folder /mnt/logs --ip_address $CLIENT_IP --tmpfile /tmp/posh
+```
+3. Configure the client configuration file as described in [the above section](https://github.com/deeptir18/posh#client-configuration-file) to look like the following:
+```yaml
+    mounts:
+        "FIRST_SERVER_IP": "/home/user/mount1"
+        "SECOND_SERVER_IP": "/home/user/mount2"
+```
+
+3. Run the following at the client:
+```bash
+cd /home/user
+$POSH_SRC/target/release/shell-client --annotations_file $POSH_SRC/config/eval_annotations.txt --mount_file $POSH_SRC/config/sample.config
+```
+
+4. At the resulting prompt, type in:
+```bash
+cat mount1/log.csv mount2/log.csv | grep "127.0.0.1"
+```
+The result will show up faster than using `bash`, as Posh offloads a `cat | grep` command to run at each proxy server and just aggregates the output in the correct order.
