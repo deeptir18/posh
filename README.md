@@ -7,12 +7,18 @@ about individual shell commands (`awk`, `cat`, `grep`, etc.) to understand which
 For more details, check out our research paper, [POSH: A Data Aware Shell](https://deeptir.me/papers/posh-atc20.pdf) which will be published at [Usenix ATC 2020](https://www.usenix.org/conference/atc20).
 This implementation is a research prototype -- use at your own risk!
 
-#Contents
-[Demo Video](##Demo Video)
+# Contents
+
+[Demo Video](##Demo-Video)
+
 [Dependencies](##Dependencies)
-[Building Posh](##Building Posh)
+
+[Building Posh](##Building-Posh)
+
 [Configuring and Running Posh](##Configuring-and-Running-Posh)
+
 [Annotations](##Annotations)
+
 [Example Usage](##Example-usage)
 
 ## Demo Video
