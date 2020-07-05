@@ -19,7 +19,7 @@ This implementation is a research prototype -- use at your own risk!
 
 [Annotations](##Annotations)
 
-[Example Usage](##Example-usage)
+[Example Usage](##Example-Usage)
 
 ## Demo Video
 Coming soon!
