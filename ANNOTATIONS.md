@@ -6,13 +6,14 @@ individual command (`awk`, `tar`, `cat`, `grep`) so, from an arbitrary
 pipeline (one or more of these commands with standard shell syntax).
 
 # Contents
-[Motivation](##Motivation)
 
-[Interface](##Interface)
+[Motivation](https://github.com/deeptir18/posh/blob/master/ANNOTATIONS.md#motivation)
 
-[Examples](##Examples)
+[Interface](https://github.com/deeptir18/posh/blob/master/ANNOTATIONS.md#annotation-interface)
 
-[Using the annotations](##Using-the-annotations)
+[Examples](https://github.com/deeptir18/posh/blob/master/ANNOTATIONS.md#examples)
+
+[Using the annotations](https://github.com/deeptir18/posh/blob/master/ANNOTATIONS.md#using-the-annotations)
 
 ## Motivation
 Consider a simple pipeline:
@@ -68,7 +69,7 @@ command_name[needs_current_dir,filters_input]: FLAGS:[(arg0),(arg1)...] OPTPARAM
    keywords pertaining to metadata about the entire command, which are comma
    separated
     - `grep[filters_input]:`
-2. Then, there is a list of `PARAMS`, `OPTPARAMS`, and FLAGS`
+2. Then, there is a list of `PARAMS`, `OPTPARAMS`, and `FLAGS`
 3. Each argument type is followed by a list of the arguments that fall under
    that category, separated by parentheses and comma, like the following:
     - `FLAGS:[(arg0)]`

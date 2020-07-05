@@ -9,17 +9,17 @@ This implementation is a research prototype -- use at your own risk!
 
 # Contents
 
-[Demo Video](##Demo-Video)
+[Demo Video](https://github.com/deeptir18/posh#demo-video)
 
-[Dependencies](##Dependencies)
+[Dependencies](https://github.com/deeptir18/posh#dependencies)
 
-[Building Posh](##Building-Posh)
+[Building Posh](https://github.com/deeptir18/posh#building-posh)
 
-[Configuring and Running Posh](##Configuring-and-Running-Posh)
+[Configuring and Running Posh](https://github.com/deeptir18/posh#configuring-and-running-posh)
 
-[Annotations](##Annotations)
+[Annotations](https://github.com/deeptir18/posh#annotations)
 
-[Example Usage](##Example-Usage)
+[Example Usage](https://github.com/deeptir18/posh#example-usage)
 
 ## Demo Video
 Coming soon!
