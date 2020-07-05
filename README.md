@@ -11,9 +11,9 @@ This implementation is a research prototype -- use at your own risk!
 [Demo Video](##Demo Video)
 [Dependencies](##Dependencies)
 [Building Posh](##Building Posh)
-[Configuring and Running Posh](##Configuring and Running Posh)
+[Configuring and Running Posh](##Configuring-and-Running-Posh)
 [Annotations](##Annotations)
-[Example Usage](##Example usage)
+[Example Usage](##Example-usage)
 
 ## Demo Video
 Coming soon!

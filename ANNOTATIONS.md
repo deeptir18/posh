@@ -12,7 +12,7 @@ pipeline (one or more of these commands with standard shell syntax).
 
 [Examples](##Examples)
 
-[Using the annotations](##Using the annotations)
+[Using the annotations](##Using-the-annotations)
 
 ## Motivation
 Consider a simple pipeline:
