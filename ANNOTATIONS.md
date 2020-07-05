@@ -7,7 +7,9 @@ pipeline (one or more of these commands with standard shell syntax).
 
 # Contents:
 [Motivation](##Motivation)
+
 [Interface](##Interface)
+
 [Examples](##Examples)
 
 ## Motivation
