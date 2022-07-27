@@ -21,9 +21,6 @@ This implementation is a research prototype -- use at your own risk!
 
 [Example Usage](https://github.com/deeptir18/posh#example-usage)
 
-## Demo Video
-Coming soon!
-
 ## Dependencies
 1. The latest version of Rust. See [this link](https://www.rust-lang.org/tools/install) for installation details.
 
@@ -138,7 +135,6 @@ simple pipeline that runs `cat` of files from two different NFS mounts, and
 pipes the output to `grep`. The proxy servers will run on each NFS mount directly.
 
 0. Configure NFS at the client and servers so the two servers expose NFS mounts to the client.
-See [EXPERIMENTS.md](EXPERIMENTS.md) for more details on the NFS setup in our experiments.
 In this example, each NFS servers hosts the shared directory at `/mnt/logs` and the client mounts them at 
 `/home/user/mount1` and `/home/user/mount2` respectively.
 
